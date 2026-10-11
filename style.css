@@ -199,3 +199,9 @@ dialog label input,dialog label select,dialog label textarea{display:block;width
 .askform{display:flex;gap:10px;align-items:flex-end}
 .askform textarea{flex:1;resize:none;padding:11px 14px;border-radius:12px;max-height:120px;line-height:1.45}
 .askform button{padding:9px 20px}
+/* mobile tab bar: scrollable, hidden scrollbar */
+.tabs a{white-space:nowrap;flex:0 0 auto}
+@media(max-width:700px){.tabs{width:100%;max-width:100%;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}.tabs::-webkit-scrollbar{display:none}.tabs a{padding:7px 15px}html,body{overflow-x:hidden}}
+.quick input{min-width:0}.mcard input,.mcard select,.mcard textarea{box-sizing:border-box;max-width:100%}
+@media(max-width:700px){.quick{gap:8px}.quick select{max-width:110px}.mcard{padding:18px 18px 16px}}
+.tabs{position:relative}
