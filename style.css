@@ -205,3 +205,32 @@ dialog label input,dialog label select,dialog label textarea{display:block;width
 .quick input{min-width:0}.mcard input,.mcard select,.mcard textarea{box-sizing:border-box;max-width:100%}
 @media(max-width:700px){.quick{gap:8px}.quick select{max-width:110px}.mcard{padding:18px 18px 16px}}
 .tabs{position:relative}
+
+/* login */
+body.locked .app{display:none}
+.login{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px;z-index:50}
+.logincard{width:360px;max-width:100%;background:var(--card);border:1px solid #f2eee6;border-radius:18px;box-shadow:var(--sh);padding:38px 34px 30px;text-align:center}
+.logincard h1{font-family:var(--serif);font-size:32px;line-height:1.1;letter-spacing:-.01em}
+.logincard h1 em{font-style:normal;color:var(--accd)}
+.logincard h1::after{content:"";display:block;width:44px;height:3px;border-radius:3px;background:var(--acc);opacity:.7;margin:16px auto 0}
+.logincard p{color:var(--mut);margin:18px 0 20px}
+.logincard input{width:100%;padding:11px 14px;text-align:center}
+.logincard button{width:100%;margin-top:14px;padding:10px}
+.loginerr{min-height:20px;margin-top:10px;color:var(--terra);font-size:13px}
+/* comments */
+.cmts{margin:6px 0 16px;padding-top:16px;border-top:1px solid var(--line)}
+.cmts h3{font-family:var(--serif);font-size:16px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.cmtlist{max-height:190px;overflow:auto;display:flex;flex-direction:column;gap:12px;margin-bottom:12px}
+.cmt{display:flex;gap:10px;align-items:flex-start}
+.cmt p{margin:2px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13.5px}
+.cwho{display:flex;gap:8px;align-items:baseline;font-size:12.5px}.cwho small,.act small{color:var(--mut);font-size:11.5px}
+.cmtadd{display:flex;gap:8px}.cmtadd input{flex:1;min-width:0}
+.cmtlist .empty{padding:2px 0;color:var(--mut);font-size:13px}
+/* activity */
+.actlist{background:var(--card);border:1px solid #f2eee6;border-radius:var(--r);box-shadow:var(--sh);padding:6px 22px}
+.act{display:flex;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.act:last-child{border-bottom:0}.act.link{cursor:pointer}.act.link:hover .atask{color:var(--accd)}
+.atxt{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;overflow-wrap:anywhere}
+.atask{color:var(--mut);font-size:12.5px}
+.actlist .empty{padding:22px 0;color:var(--mut);text-align:center}
+@media(max-width:700px){.actlist{padding:4px 14px}.act small{display:none}}

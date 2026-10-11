@@ -1,10 +1,11 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Magpy Interns</title><link rel="stylesheet" href="style.css?v=13"></head><body>
+<title>Magpy Interns</title><link rel="stylesheet" href="style.css?v=14"></head><body>
+<div id="login" class="login" hidden><form id="loginForm" class="logincard" autocomplete="off"><h1><span class="mark">Magpy</span> <em>interns</em></h1><p>Enter the team password to continue.</p><input type="password" id="loginPw" placeholder="Password" aria-label="Password" autocomplete="current-password"><div id="loginErr" class="loginerr" role="alert"></div><button class="primary" type="submit">Sign in</button></form></div>
 <div class="app">
 <header class="top">
  <div class="brand"><h1><span class="mark">Magpy</span> <em>interns</em></h1><p id="greet" class="greet"></p>
   <p class="create" aria-label="Create new"><span>Create</span><a href="https://docs.new" target="_blank" rel="noopener">Doc</a><a href="https://slides.new" target="_blank" rel="noopener">Slides</a><a href="https://sheets.new" target="_blank" rel="noopener">Sheet</a></p></div>
- <nav class="tabs" id="tabs" role="tablist"><a href="#tasks" data-tab="tasks">Tasks</a><a href="#calendar" data-tab="calendar">Calendar</a><a href="#board" data-tab="board">Board</a><a href="#meetings" data-tab="meetings">Meetings</a><a href="#ask" data-tab="ask">Ask</a><a href="#hours" data-tab="hours">Hours</a></nav>
+ <nav class="tabs" id="tabs" role="tablist"><a href="#tasks" data-tab="tasks">Tasks</a><a href="#calendar" data-tab="calendar">Calendar</a><a href="#board" data-tab="board">Board</a><a href="#meetings" data-tab="meetings">Meetings</a><a href="#ask" data-tab="ask">Ask</a><a href="#activity" data-tab="activity">Activity</a><a href="#hours" data-tab="hours">Hours</a></nav>
 </header>
 <hr class="rule">
 <main class="main">
@@ -53,6 +54,7 @@
    </form>
   </div>
  </section>
+ <section id="pActivity" class="pane" hidden><p class="mnote">Recent changes across the team, newest first.</p><div id="activity" class="actlist"></div></section>
  <section id="pHours" class="pane narrow" hidden><div id="hours"></div></section>
 </main>
 </div>
@@ -66,6 +68,8 @@
  <label>Priority<select name="priority"><option>Urgent</option><option>High</option><option>Medium</option><option>Low</option></select></label></div>
  <label>Area<input name="area" value="Magpy"></label>
  <label>Notes<textarea name="notes" rows="3"></textarea></label>
+ <section id="cmts" class="cmts" hidden><h3>Comments <span class="count" id="cmtN">0</span></h3><div id="cmtList" class="cmtlist"></div>
+  <div class="cmtadd"><input id="cmtIn" placeholder="Write a comment…" maxlength="2000" autocomplete="off" aria-label="New comment"><button type="button" id="cmtBtn" class="primary sm">Post</button></div></section>
  <div class="actions"><button type="button" id="del" class="danger">Delete</button><span></span>
  <button type="button" id="cancel">Cancel</button><button class="primary" value="save">Save</button></div>
 </form></dialog>

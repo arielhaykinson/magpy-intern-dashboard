@@ -26,6 +26,7 @@
     async setHours(p, w, h) { const d = await this.load(); d.hours[p + "|" + w] = h; write(d); },
     async reset() { localStorage.removeItem(KEY); },
     async saveMeeting(m) { const d = await this.load(); d.meetings ||= []; if (!m.id) { m.id = "m" + uid(); m.status = "requested"; m.googleEventId = null; } const i = d.meetings.findIndex((x) => x.id === m.id); i >= 0 ? (d.meetings[i] = m) : d.meetings.push(m); write(d); return m; },
+    async addComment(id, text) { const d = await this.load(); const c = { id: "c" + uid(), author: Store.user() || "Ariel", text, at: new Date().toISOString() }; ((d.comments ||= {})[id] ||= []).push(c); write(d); return c; },
     async sendAsk(text) { return null; },
     async cancelMeeting(id) { const d = await this.load(); const m = (d.meetings || []).find((x) => x.id === id); if (m) { m.status = "cancelled"; write(d); } },
   };
@@ -34,10 +35,12 @@
   const emit = (type) => subs.forEach((f) => { try { f({ type, online, saving: saving > 0 }); } catch (e) { console.error(e); } });
   const now = () => (lastClock = Math.max(Date.now(), lastClock + 1));
   const setOnline = (v) => { if (online !== v) { online = v; emit("status"); } };
+  const authLost = () => window.dispatchEvent(new Event("magpy-auth"));
   async function api(method, url, body) {
     saving++; emit("status");
     try {
       const r = await fetch(url, { method, headers: { "content-type": "application/json", "x-user": Store.user() }, body: body ? JSON.stringify(body) : undefined });
+      if (r.status === 401) authLost();
       if (!r.ok) throw new Error("HTTP " + r.status);
       setOnline(true); return await r.json();
     } catch (e) { setOnline(false); throw e; }
@@ -48,10 +51,11 @@
     es = new EventSource("/api/events");
     es.onopen = () => { setOnline(true); emit("change"); }; // resync after (re)connect
     es.addEventListener("change", () => emit("change"));
-    es.onerror = () => setOnline(false); // EventSource retries automatically
+    es.onerror = () => { setOnline(false); if (es.readyState === 2) { es = null; setTimeout(() => { if (!document.hidden || true) connect(); }, 4000); } }; // EventSource retries by itself unless the server refused (e.g. 401)
   }
   const remote = {
-    async load() { const r = await fetch("/api/data", { cache: "no-store" }).catch((e) => { setOnline(false); throw e; }); if (!r.ok) { setOnline(false); throw new Error("HTTP " + r.status); } setOnline(true); return r.json(); },
+    async load() { const r = await fetch("/api/data", { cache: "no-store" }).catch((e) => { setOnline(false); throw e; }); if (r.status === 401) authLost(); if (!r.ok) { setOnline(false); throw new Error("HTTP " + r.status); } setOnline(true); return r.json(); },
+    async addComment(id, text) { const r = await api("POST", "/api/task/" + encodeURIComponent(id) + "/comments", { text, author: Store.user() }); return r.comment; },
     async saveTask(t) { if (!t.id) t.id = uid(); t.updatedAt = now(); const r = await api("PUT", "/api/task", t); if (r.task) Object.assign(t, r.task); return t; },
     async deleteTask(id) { await api("DELETE", "/api/task/" + encodeURIComponent(id) + "?updatedAt=" + now()); },
     async setHours(p, w, h) { await api("PUT", "/api/hours", { key: p + "|" + w, value: h, updatedAt: now() }); },
@@ -63,7 +67,11 @@
   const be = () => (isDemo() ? local : remote);
   window.Store = {
     load: () => be().load(), saveTask: (t) => be().saveTask(t), deleteTask: (id) => be().deleteTask(id),
-    setHours: (p, w, h) => be().setHours(p, w, h), saveMeeting: (m) => be().saveMeeting(m), cancelMeeting: (id) => be().cancelMeeting(id), sendAsk: (t) => be().sendAsk(t), reset: () => be().reset(),
+    setHours: (p, w, h) => be().setHours(p, w, h), saveMeeting: (m) => be().saveMeeting(m), cancelMeeting: (id) => be().cancelMeeting(id), sendAsk: (t) => be().sendAsk(t), addComment: (id, t) => be().addComment(id, t),
+    async session() { try { const r = await fetch("/api/session", { cache: "no-store" }); return r.ok ? await r.json() : { required: false, ok: true }; } catch { return { required: false, ok: true }; } },
+    async login(password) { const r = await fetch("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "Could not sign in."); return j; },
+    async logout() { await fetch("/api/logout", { method: "POST" }); }, reset: () => be().reset(),
+    reconnect: () => { if (es && es.readyState !== 2) return; es = null; connect(); },
     subscribe(fn) { subs.add(fn); connect(); return () => subs.delete(fn); },
     user: () => localStorage.getItem(UKEY) || "",
     setUser: (u) => localStorage.setItem(UKEY, u),

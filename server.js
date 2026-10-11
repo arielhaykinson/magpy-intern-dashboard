@@ -1,5 +1,5 @@
 // Magpy dashboard server: static files + JSON API + SSE. No dependencies (Node 18+).
-const http = require("http"), fs = require("fs"), path = require("path");
+const http = require("http"), fs = require("fs"), path = require("path"), crypto = require("crypto");
 const PORT = +process.env.PORT || 8765, ROOT = __dirname;
 const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, "data"), DB = path.join(DATA_DIR, "db.json"), BK = path.join(DATA_DIR, "backups");
 fs.mkdirSync(BK, { recursive: true });
@@ -27,10 +27,10 @@ if (!db.priorityMigrated) {
   for (const t of db.tasks) if (M.includes(t.title) && t.priority === "High" && t.status === "Open" && t.owner === "Unassigned" && !t.due && t.area === "Magpy" && !t.notes && base && Math.abs(t.updatedAt - base) < 50) { t.priority = "Medium"; t.updatedAt = Date.now(); }
   db.priorityMigrated = true; migrated = true;
 }
-db.hours ||= {}; db.tombstones ||= {}; db.meetings ||= []; db.asks ||= [];
+db.hours ||= {}; db.tombstones ||= {}; db.meetings ||= []; db.asks ||= []; db.comments ||= {}; db.activity ||= [];
 function persist() { const tmp = DB + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(db, null, 1)); fs.renameSync(tmp, DB); dirty = true; }
 if (migrated) persist();
-const view = () => ({ tasks: db.tasks, meetings: db.meetings, asks: db.asks, hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])) });
+const view = () => ({ tasks: db.tasks, meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])) });
 
 // Backups: on start and every 10 min if changed; keep newest 48.
 function backup() {
@@ -67,11 +67,60 @@ function cleanMeeting(m, cur, by) {
 }
 const touch = (m) => { m.updatedAt = Date.now(); return m; };
 const aid = () => "a" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+// ---- Auth: optional shared password (APP_PASSWORD). Unset = login disabled.
+const APP_PASSWORD = process.env.APP_PASSWORD || "";
+const SECRET = process.env.SESSION_SECRET || (APP_PASSWORD ? crypto.createHash("sha256").update("magpy-session|" + APP_PASSWORD).digest("hex") : "");
+const SESSION_MS = 30 * 24 * 3600 * 1000, COOKIE = "magpy_session";
+const hmac = (v) => crypto.createHmac("sha256", SECRET).update(v).digest("base64url");
+const safeEq = (a, b) => { const x = crypto.createHash("sha256").update(String(a)).digest(), y = crypto.createHash("sha256").update(String(b)).digest(); return crypto.timingSafeEqual(x, y); };
+const makeSession = () => { const exp = String(Date.now() + SESSION_MS); return exp + "." + hmac("v1." + exp); };
+function hasSession(req) {
+  const m = /(?:^|;\s*)magpy_session=([^;]+)/.exec(req.headers.cookie || ""); if (!m) return false;
+  const [exp, sig] = m[1].split("."); if (!exp || !sig || !(+exp > Date.now())) return false;
+  const want = hmac("v1." + exp); return sig.length === want.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want));
+}
+const isHttps = (req) => String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https";
+const cookie = (req, val, maxAge) => `${COOKIE}=${val}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${isHttps(req) ? "; Secure" : ""}`;
+const fails = new Map(); // ip -> { n, first }
+const FAIL_MAX = 5, FAIL_WIN = 10 * 60 * 1000;
+const ipOf = (req) => String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
+setInterval(() => { const t = Date.now(); for (const [k, v] of fails) if (t - v.first > FAIL_WIN) fails.delete(k); }, 60000).unref();
+
+// ---- Activity log + comments
+const actId = () => "x" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+function log(by, kind, task, text) {
+  db.activity.push({ id: actId(), at: new Date().toISOString(), who: String(by || "").slice(0, 40), kind, taskId: task ? task.id : "", title: task ? task.title : "", text: String(text || "").slice(0, 200) });
+  if (db.activity.length > 500) db.activity = db.activity.slice(-500);
+}
+const LBL = { status: "status", priority: "priority", owner: "owner", due: "due date" };
+function logTaskChange(by, cur, nt) {
+  if (!cur) return log(by, "created", nt, "created this task");
+  for (const k of ["status", "priority", "owner", "due"]) if ((cur[k] || "") !== (nt[k] || "")) log(by, "change", nt, `changed ${LBL[k]}: ${cur[k] || "none"} → ${nt[k] || "none"}`);
+  if (cur.title !== nt.title) log(by, "change", nt, `renamed from “${cur.title}”`);
+}
 const FIELDS = ["title", "status", "owner", "due", "priority", "area", "notes"];
 
 http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x"), p = url.pathname, by = req.headers["x-user"] || "";
   try {
+    if (p === "/api/session" && req.method === "GET") return send(res, 200, { required: !!APP_PASSWORD, ok: !APP_PASSWORD || hasSession(req) });
+    if (p === "/api/login" && req.method === "POST") {
+      if (!APP_PASSWORD) return send(res, 200, { ok: true, required: false });
+      const ip = ipOf(req), f = fails.get(ip), t = Date.now();
+      if (f && t - f.first > FAIL_WIN) fails.delete(ip);
+      const cf = fails.get(ip);
+      if (cf && cf.n >= FAIL_MAX) { const wait = Math.ceil((cf.first + FAIL_WIN - t) / 1000); res.setHeader("retry-after", wait); return send(res, 429, { error: "Too many attempts. Try again in a few minutes." }); }
+      const b = await body(req);
+      if (typeof b.password === "string" && safeEq(b.password, APP_PASSWORD)) {
+        fails.delete(ip); res.setHeader("set-cookie", cookie(req, makeSession(), SESSION_MS / 1000)); return send(res, 200, { ok: true });
+      }
+      const n = fails.get(ip) || { n: 0, first: t }; n.n++; fails.set(ip, n);
+      await new Promise((r) => setTimeout(r, 400));
+      return send(res, 401, { error: "That password didn't match." });
+    }
+    if (p === "/api/logout" && req.method === "POST") { res.setHeader("set-cookie", cookie(req, "", 0)); return send(res, 200, { ok: true }); }
+    if (p.startsWith("/api/") && APP_PASSWORD && !hasSession(req)) return send(res, 401, { error: "login required" });
     if (p === "/api/events") {
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
       res.write("retry: 1000\n\n"); clients.add(res); req.on("close", () => clients.delete(res)); return;
@@ -83,13 +132,22 @@ http.createServer(async (req, res) => {
       const i = db.tasks.findIndex((x) => x.id === t.id), cur = db.tasks[i];
       if ((cur && cur.updatedAt > t.updatedAt) || (db.tombstones[t.id] || 0) > t.updatedAt) return send(res, 200, { applied: false, task: cur || null });
       const nt = { id: t.id, updatedAt: t.updatedAt }; for (const k of FIELDS) nt[k] = String(t[k] ?? ""); nt.priority = normPri(nt.priority);
-      i >= 0 ? (db.tasks[i] = nt) : db.tasks.push(nt); delete db.tombstones[t.id];
+      logTaskChange(by, cur, nt); i >= 0 ? (db.tasks[i] = nt) : db.tasks.push(nt); delete db.tombstones[t.id];
       persist(); broadcast(by); return send(res, 200, { applied: true, task: nt });
     }
     if (p.startsWith("/api/task/") && req.method === "DELETE") {
       const id = decodeURIComponent(p.slice(10)), at = +url.searchParams.get("updatedAt") || Date.now(), cur = db.tasks.find((x) => x.id === id);
       if (cur && cur.updatedAt > at) return send(res, 200, { applied: false });
-      db.tasks = db.tasks.filter((x) => x.id !== id); db.tombstones[id] = at; persist(); broadcast(by); return send(res, 200, { applied: true });
+      if (cur) log(by, "deleted", cur, "deleted this task"); db.tasks = db.tasks.filter((x) => x.id !== id); delete db.comments[id]; db.tombstones[id] = at; persist(); broadcast(by); return send(res, 200, { applied: true });
+    }
+    const cm = p.match(/^\/api\/task\/([^/]+)\/comments$/);
+    if (cm && req.method === "POST") {
+      const id = decodeURIComponent(cm[1]), task = db.tasks.find((x) => x.id === id); if (!task) return send(res, 404, { error: "no such task" });
+      const b = await body(req), text = typeof b.text === "string" ? b.text.trim() : "";
+      if (!text) return send(res, 400, { error: "text required" }); if (text.length > 2000) return send(res, 400, { error: "comment too long (max 2000)" });
+      const c = { id: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), author: String(b.author || by || "Someone").slice(0, 40), text, at: new Date().toISOString() };
+      (db.comments[id] ||= []).push(c); log(c.author, "comment", task, "commented: " + (text.length > 90 ? text.slice(0, 90) + "…" : text));
+      persist(); broadcast(by); return send(res, 201, { comment: c });
     }
     if (p === "/api/hours" && req.method === "PUT") {
       const { key, value, updatedAt } = await body(req), at = +updatedAt || Date.now();
@@ -100,7 +158,7 @@ http.createServer(async (req, res) => {
     if (p === "/api/meetings" && req.method === "GET") return send(res, 200, { meetings: db.meetings });
     if (p === "/api/meetings" && req.method === "POST") {
       const r = cleanMeeting(await body(req), null, by); if (r.error) return send(res, 400, r);
-      db.meetings.push(touch(r.m)); persist(); broadcast(by); return send(res, 201, { meeting: r.m });
+      db.meetings.push(touch(r.m)); log(by || r.m.createdBy, "meeting", { id: "", title: r.m.title }, "requested a meeting on " + r.m.start.slice(0, 10)); persist(); broadcast(by); return send(res, 201, { meeting: r.m });
     }
     if (p === "/api/meetings/pending" && req.method === "GET") {
       const inc = url.searchParams.get("include") === "cancelled";
@@ -144,7 +202,7 @@ http.createServer(async (req, res) => {
       a.reply = b.reply.trim(); a.status = "handled"; a.repliedAt = new Date().toISOString(); persist(); broadcast(by); return send(res, 200, { ask: a });
     }
     if (p === "/api/reset" && req.method === "POST") {
-      db = { seeded: true, tasks: seedTasks(), hours: {}, tombstones: {}, meetings: [], asks: db.asks }; persist(); broadcast(by); return send(res, 200, { ok: true });
+      db = { seeded: true, tasks: seedTasks(), hours: {}, tombstones: {}, meetings: [], asks: db.asks, comments: {}, activity: [] }; persist(); broadcast(by); return send(res, 200, { ok: true });
     }
     if (p.startsWith("/api/")) return send(res, 404, { error: "not found" });
     // static

@@ -5,7 +5,7 @@ const SCOLOR = { Open: "var(--s-open)", "In Progress": "var(--s-prog)", Review: 
 const I = (p, c = "ic") => `<svg class="${c}" viewBox="0 0 16 16" aria-hidden="true">${p}</svg>`;
 const ICONS = { caret: '<path d="M4.5 6.5 8 10l3.5-3.5"/>', prev: '<path d="M9.5 4 5.5 8l4 4"/>', next: '<path d="M6.5 4l4 4-4 4"/>', cal: '<rect x="2.5" y="3.5" width="11" height="10" rx="2"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/>', clock: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/>', inbox: '<path d="M2.5 9.5 4 4a1.5 1.5 0 0 1 1.4-1h5.2A1.5 1.5 0 0 1 12 4l1.5 5.5v2a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M2.5 9.5h3l.8 1.5h3.4l.8-1.5h3"/>', list: '<path d="M3 4.5h10M3 8h10M3 11.5h6"/>', board: '<rect x="2.5" y="3" width="4" height="10" rx="1.2"/><rect x="9.5" y="3" width="4" height="6" rx="1.2"/>' };
 const $ = (s) => document.querySelector(s);
-let data = { tasks: [], hours: {}, meetings: [], asks: [] }, tab = "tasks", ownerF = "", selDay = "", demo = false;
+let data = { tasks: [], hours: {}, meetings: [], asks: [], comments: {}, activity: [] }, tab = "tasks", ownerF = "", selDay = "", demo = false;
 const closed = new Set(); const today = new Date(); const iso = (d) => d.toLocaleDateString("en-CA");
 const TODAY = iso(today); let cur = new Date(today.getFullYear(), today.getMonth(), 1);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -23,7 +23,7 @@ const byDue = (x, y) => (x.due ? 0 : 1) - (y.due ? 0 : 1) || (x.due || "").local
 const cmpTasks = (x, y) => sortBy === "priority" ? PR[pri(x)] - PR[pri(y)] || byDue(x, y) : byDue(x, y) || PR[pri(x)] - PR[pri(y)];
 const priTag = (t) => `<button type="button" class="pri ${pri(t)}" data-pri="${t.id}" aria-haspopup="menu" title="Change priority">${pri(t)}</button>`;
 
-async function refresh() { data = await Store.load(); if (demo) applyDemo(); render(); }
+async function refresh() { try { data = await Store.load(); } catch (e) { if (loginOpen()) return; throw e; } if (demo) applyDemo(); render(); }
 function filtered() {
   const s = $("#fStatus").value;
   return data.tasks.filter((t) => (!ownerF || t.owner === ownerF) && (!s || t.status === s) && (!$("#fPri").value || pri(t) === $("#fPri").value)).sort(cmpTasks);
@@ -88,14 +88,14 @@ function renderHours() {
   }).join("");
 }
 let demoAsks = [];
-const TABS = ["tasks", "calendar", "board", "meetings", "ask", "hours"];
+const TABS = ["tasks", "calendar", "board", "meetings", "ask", "activity", "hours"];
 function render() {
   const list = filtered();
   for (const t of TABS) { $("#p" + t[0].toUpperCase() + t.slice(1)).hidden = t !== tab; }
   document.querySelectorAll("#tabs a").forEach((a) => { const on = a.dataset.tab === tab; a.classList.toggle("on", on); on ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"); });
   { const a = document.querySelector("#tabs a.on"), bar = $("#tabs"); if (a && bar.scrollWidth > bar.clientWidth) bar.scrollTo({ left: a.offsetLeft - (bar.clientWidth - a.offsetWidth) / 2, behavior: "auto" }); }
   $("#ownerChips").innerHTML = ["", ...OWNERS].map((o) => `<button class="chip ${o === ownerF ? "on" : ""}" data-owner="${o}">${o || "Everyone"}</button>`).join("");
-  renderList(list); upNext(); renderBoard(data.tasks); renderCal(); renderMeetings(); renderAsk(); renderHours();
+  renderList(list); upNext(); renderBoard(data.tasks); renderCal(); renderMeetings(); renderAsk(); renderActivity(); renderHours(); if ($("#modal").open) renderComments($("#form").dataset.id);
 }
 function readHash() {
   const p = location.hash.slice(1).toLowerCase().split(/[&?\/,-]+/);
@@ -106,7 +106,7 @@ function openModal(t) {
   const f = $("#form"); t = t || { status: "Open", owner: "Unassigned", priority: "Medium", area: "Magpy" };
   $("#mTitle").textContent = t.id ? "Edit task" : "New task"; f.dataset.id = t.id || "";
   for (const k of ["title", "status", "owner", "due", "priority", "area", "notes"]) f.elements[k].value = t[k] || "";
-  $("#del").style.display = t.id ? "" : "none"; $("#modal").showModal();
+  $("#del").style.display = t.id ? "" : "none"; renderComments(t.id || ""); $("#cmtIn").value = ""; $("#modal").showModal();
 }
 const addTask = async (title, due, p) => { title = title.trim(); if (!title) return; await Store.saveTask({ title, status: "Open", owner: ownerF && ownerF !== "" ? ownerF : "Unassigned", due: due || "", priority: p || "Medium", area: "Magpy", notes: "" }); refresh(); };
 function applyDemo() {
@@ -143,6 +143,7 @@ function setupSync() {
   top.appendChild(box); $("#who").value = Store.user();
   $("#who").onchange = () => { Store.setUser($("#who").value); greet(); };
   const paint = () => { const s = Store.status(); $("#syncState").textContent = s.demo ? "Demo (local only)" : !s.online ? "● Offline" : s.saving ? "Saving…" : "● Saved"; $("#syncState").style.color = !s.online && !s.demo ? "#b4533c" : ""; };
+  if (authRequired) { const o = document.createElement("a"); o.href = "#"; o.id = "logout"; o.textContent = "Log out"; o.style.cssText = "color:inherit;margin-left:auto"; o.onclick = async (e) => { e.preventDefault(); await Store.logout(); location.reload(); }; box.appendChild(o); }
   paint(); if (demo) return;
   let busy = false, again = false;
   Store.subscribe(async (ev) => {
@@ -210,6 +211,9 @@ function setupMeetings() {
   });
 }
 async function init() {
+  setupLogin();
+  readHash();
+  if (!demo) { const ses = await Store.session(); authRequired = !!ses.required; if (ses.required && !ses.ok) showLogin(); }
   setupMeetings();
   readHash(); setupSync();
   greet();
@@ -243,6 +247,7 @@ async function init() {
     const nav = g.closest("[data-nav]"); if (nav) { const n = +nav.dataset.nav; cur = n === 0 ? new Date(today.getFullYear(), today.getMonth(), 1) : new Date(cur.getFullYear(), cur.getMonth() + n, 1); if (n === 0) selDay = TODAY; render(); return; }
     const dc = g.closest("[data-day]"); if (dc) { selDay = selDay === dc.dataset.day ? "" : dc.dataset.day; render(); return; }
     const gh = g.closest(".ghead"); if (gh) { const s = gh.parentElement.dataset.g; closed.has(s) ? closed.delete(s) : closed.add(s); render(); return; }
+    const ac = g.closest("[data-aid]"); if (ac) { const t = byId(ac.dataset.aid); if (t) openModal(t); return; }
     const el = g.closest("[data-id]"); if (el && el.closest("#upnext,#list,#board,#day")) openModal(byId(el.dataset.id));
   });
   document.addEventListener("submit", (e) => { if (e.target.id === "dayAdd") { e.preventDefault(); const v = $("#dayTitle").value; addTask(v, selDay); } });
@@ -302,3 +307,45 @@ async function sendAsk() {
   };
   go();
 })();
+
+// ---- Login
+let authRequired = false;
+const loginOpen = () => !$("#login").hidden;
+function showLogin() { if (loginOpen()) return; $("#login").hidden = false; document.body.classList.add("locked"); $("#loginErr").textContent = ""; setTimeout(() => $("#loginPw").focus(), 30); }
+function setupLogin() {
+  window.addEventListener("magpy-auth", showLogin);
+  $("#loginForm").onsubmit = async (e) => {
+    e.preventDefault(); const pw = $("#loginPw").value, err = $("#loginErr"), btn = e.target.querySelector("button"); if (!pw) { err.textContent = "Enter the password."; return; }
+    btn.disabled = true; err.textContent = "";
+    try { await Store.login(pw); } catch (x) { err.textContent = x.message; btn.disabled = false; $("#loginPw").select(); return; }
+    btn.disabled = false; $("#loginPw").value = ""; $("#login").hidden = true; document.body.classList.remove("locked"); authRequired = true;
+    if (!$("#logout")) { const o = document.createElement("a"); o.href = "#"; o.id = "logout"; o.textContent = "Log out"; o.style.cssText = "color:inherit;margin-left:auto"; o.onclick = async (ev) => { ev.preventDefault(); await Store.logout(); location.reload(); }; document.querySelector(".sync")?.appendChild(o); }
+    Store.reconnect(); refresh();
+  };
+}
+
+// ---- Comments & activity
+const when = (iso) => { const d = new Date(iso), t = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }); return d.toDateString() === new Date().toDateString() ? "Today, " + t : d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + ", " + t; };
+let cmtSig = "";
+function renderComments(id) {
+  const box = $("#cmts"); box.hidden = !id; if (!id) { cmtSig = ""; return; }
+  const list = (data.comments || {})[id] || [], sig = id + JSON.stringify(list); if (sig === cmtSig) return; cmtSig = sig;
+  const el = $("#cmtList"), near = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  $("#cmtN").textContent = list.length;
+  el.innerHTML = list.map((c) => `<div class="cmt"><i class="av av-${esc(c.author)}">${esc((c.author || "?")[0])}</i><div><div class="cwho"><b>${esc(c.author || "Someone")}</b><small>${when(c.at)}</small></div><p>${esc(c.text)}</p></div></div>`).join("") || `<div class="empty">No comments yet.</div>`;
+  if (near || sig.length) el.scrollTop = near ? el.scrollHeight : el.scrollTop;
+}
+async function postComment() {
+  const inp = $("#cmtIn"), text = inp.value.trim(), id = $("#form").dataset.id; if (!text || !id) return;
+  inp.value = ""; $("#cmtBtn").disabled = true;
+  try { await Store.addComment(id, text); } catch { inp.value = text; $("#cmtBtn").disabled = false; return; }
+  $("#cmtBtn").disabled = false; data = await Store.load(); cmtSig = ""; render(); const el = $("#cmtList"); el.scrollTop = el.scrollHeight; inp.focus();
+}
+document.addEventListener("click", (e) => { if (e.target.closest("#cmtBtn")) postComment(); });
+document.addEventListener("keydown", (e) => { if (e.target.id === "cmtIn" && e.key === "Enter" && !e.isComposing) { e.preventDefault(); postComment(); } });
+let actSig = "";
+function renderActivity() {
+  const a = data.activity || [], sig = JSON.stringify(a) + tab; if (sig === actSig) return; actSig = sig;
+  $("#activity").innerHTML = a.length ? a.slice(0, 60).map((x) => `<div class="act ${x.taskId ? "link" : ""}" ${x.taskId ? `data-aid="${esc(x.taskId)}"` : ""}><i class="av av-${esc(x.who)}">${esc((x.who || "?")[0])}</i><div class="atxt"><span><b>${esc(x.who || "Someone")}</b> ${esc(x.text)}</span>${x.title ? `<span class="atask">${esc(x.title)}</span>` : ""}</div><small>${when(x.at)}</small></div>`).join("")
+    : `<p class="empty">No activity yet. Changes to tasks and comments will show up here.</p>`;
+}

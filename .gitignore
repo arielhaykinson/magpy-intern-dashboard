@@ -3,3 +3,7 @@ shots/
 node_modules/
 *.log
 tunnel.sh
+*.bak
+*.bak-*
+*.tmp
+data
