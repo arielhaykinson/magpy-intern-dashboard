@@ -1,5 +1,5 @@
 // Data layer. Server mode (default) talks to /api with SSE sync; "#demo" in the URL uses localStorage only.
-// Contract: all methods async. load() -> {tasks, hours}; saveTask(task); deleteTask(id); setHours(person, weekStart, hours); reset();
+// Contract: all methods async. load() -> {tasks, hours, meetings}; saveTask(task); deleteTask(id); setHours(person, weekStart, hours); reset();
 // Extras: subscribe(fn) -> fn({type:"change"|"status", online, saving}); user get/set.
 (function () {
   const KEY = "magpy-dashboard-v1", UKEY = "magpy-user";
@@ -25,6 +25,8 @@
     async deleteTask(id) { const d = await this.load(); d.tasks = d.tasks.filter((t) => t.id !== id); write(d); },
     async setHours(p, w, h) { const d = await this.load(); d.hours[p + "|" + w] = h; write(d); },
     async reset() { localStorage.removeItem(KEY); },
+    async saveMeeting(m) { const d = await this.load(); d.meetings ||= []; if (!m.id) { m.id = "m" + uid(); m.status = "requested"; m.googleEventId = null; } const i = d.meetings.findIndex((x) => x.id === m.id); i >= 0 ? (d.meetings[i] = m) : d.meetings.push(m); write(d); return m; },
+    async cancelMeeting(id) { const d = await this.load(); const m = (d.meetings || []).find((x) => x.id === id); if (m) { m.status = "cancelled"; write(d); } },
   };
 
   const subs = new Set(); let online = true, saving = 0, es = null, lastClock = 0;
@@ -53,11 +55,13 @@
     async deleteTask(id) { await api("DELETE", "/api/task/" + encodeURIComponent(id) + "?updatedAt=" + now()); },
     async setHours(p, w, h) { await api("PUT", "/api/hours", { key: p + "|" + w, value: h, updatedAt: now() }); },
     async reset() { await api("POST", "/api/reset"); },
+    async saveMeeting(m) { const r = m.id ? await api("PUT", "/api/meetings/" + encodeURIComponent(m.id), m) : await api("POST", "/api/meetings", { ...m, createdBy: Store.user() }); return r.meeting; },
+    async cancelMeeting(id) { await api("DELETE", "/api/meetings/" + encodeURIComponent(id)); },
   };
   const be = () => (isDemo() ? local : remote);
   window.Store = {
     load: () => be().load(), saveTask: (t) => be().saveTask(t), deleteTask: (id) => be().deleteTask(id),
-    setHours: (p, w, h) => be().setHours(p, w, h), reset: () => be().reset(),
+    setHours: (p, w, h) => be().setHours(p, w, h), saveMeeting: (m) => be().saveMeeting(m), cancelMeeting: (id) => be().cancelMeeting(id), reset: () => be().reset(),
     subscribe(fn) { subs.add(fn); connect(); return () => subs.delete(fn); },
     user: () => localStorage.getItem(UKEY) || "",
     setUser: (u) => localStorage.setItem(UKEY, u),

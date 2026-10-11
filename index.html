@@ -1,9 +1,9 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Magpy Interns</title><link rel="stylesheet" href="style.css?v=7"></head><body>
+<title>Magpy Interns</title><link rel="stylesheet" href="style.css?v=8"></head><body>
 <div class="app">
 <header class="top">
  <div class="brand"><h1><span class="mark">Magpy</span> <em>interns</em></h1><p id="greet" class="greet"></p></div>
- <nav class="tabs" id="tabs" role="tablist"><a href="#tasks" data-tab="tasks">Tasks</a><a href="#calendar" data-tab="calendar">Calendar</a><a href="#board" data-tab="board">Board</a><a href="#hours" data-tab="hours">Hours</a></nav>
+ <nav class="tabs" id="tabs" role="tablist"><a href="#tasks" data-tab="tasks">Tasks</a><a href="#calendar" data-tab="calendar">Calendar</a><a href="#board" data-tab="board">Board</a><a href="#meetings" data-tab="meetings">Meetings</a><a href="#hours" data-tab="hours">Hours</a></nav>
 </header>
 <hr class="rule">
 <main class="main">
@@ -18,6 +18,28 @@
  </section>
  <section id="pCalendar" class="pane" hidden><div id="cal"></div><div id="day"></div></section>
  <section id="pBoard" class="pane wide" hidden><div id="board"></div></section>
+ <section id="pMeetings" class="pane" hidden>
+  <p class="mnote">New meetings are added to Google Calendar shortly after you request them.</p>
+  <form id="mform" class="mcard" autocomplete="off">
+   <h2 id="mfTitle">Schedule a meeting</h2>
+   <label>Title<input name="title" required placeholder="e.g. Natrion memo review"></label>
+   <div class="grid3">
+    <label>Date<input type="date" name="date" required></label>
+    <label>Start time<input type="time" name="time" required value="10:00"></label>
+    <label>Duration<select name="duration"><option value="15">15 min</option><option value="30" selected>30 min</option><option value="45">45 min</option><option value="60">1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option></select></label>
+   </div>
+   <div class="fl">Attendees</div>
+   <div class="who" id="mWho"></div>
+   <label>Other emails <small>(comma separated)</small><input name="extra" placeholder="name@example.com, other@example.com"></label>
+   <label>Notes <small>(optional)</small><textarea name="notes" rows="2"></textarea></label>
+   <div class="mopts">
+    <label class="chk"><input type="checkbox" name="meet"> Add Google Meet link</label>
+    <label>Reminder<select name="reminder"><option value="0">None</option><option value="10">10 minutes before</option><option value="60">1 hour before</option><option value="1440">1 day before</option></select></label>
+   </div>
+   <div class="actions"><span id="mErr" class="merr"></span><button type="button" id="mReset" hidden>Cancel edit</button><button class="primary" id="mSave">Request meeting</button></div>
+  </form>
+  <div id="mlist"></div>
+ </section>
  <section id="pHours" class="pane narrow" hidden><div id="hours"></div></section>
 </main>
 </div>

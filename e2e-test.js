@@ -17,13 +17,21 @@ const URL_ = process.env.URL || "http://localhost:8765/index.html#tasks", sleep 
   await A.evaluate(() => [...document.querySelectorAll("#list .row .title")].find((e) => e.textContent === "Natrion sonar").click());
   await A.$eval("#form [name=title]", (e) => (e.value = "Natrion sonar v2")); await A.click("#form .primary");
   const dt2 = await waitFor(C, "Natrion sonar v2"); ok("edit syncs (" + dt2 + "ms)", dt2 >= 0 && dt2 < 1500);
-  ok("open modal survived remote re-render", await C.evaluate(() => document.querySelector("#modal").open && document.querySelector("[name=notes]").value === "typing in progress"));
+  ok("open modal survived remote re-render", await C.evaluate(() => document.querySelector("#modal").open && document.querySelector("#form [name=notes]").value === "typing in progress"));
   await C.click("#cancel");
   // hours
   await A.evaluate(() => { location.hash = "#hours"; }); await A.waitForSelector("#hours input");
   await A.$eval("#hours input[data-p=Can]", (e) => { e.value = "6.5"; e.dispatchEvent(new Event("change", { bubbles: true })); });
   await C.evaluate(() => { location.hash = "#hours"; }); await sleep(1200);
   ok("hours sync", await C.$eval("#hours input[data-p=Can]", (e) => e.value === "6.5"));
+  // meetings: A requests via form, C sees it live with "Requested"
+  await A.evaluate(() => { location.hash = "#meetings"; }); await C.evaluate(() => { location.hash = "#meetings"; }); await A.waitForSelector("#mform");
+  await A.type("#mform [name=title]", "E2E meeting"); await A.$eval("#mform [name=date]", (e) => (e.value = "2030-01-15")); await A.click("#mWho input[value=Can]"); await A.click("#mSave");
+  const dm = await waitFor(C, "E2E meeting"); ok("meeting syncs (" + dm + "ms)", dm >= 0 && dm < 1500); ok("meeting shows Requested", await has(C, "Requested"));
+  const mid = (await (await fetch("http://localhost:8765/api/meetings")).json()).meetings.find((m) => m.title === "E2E meeting").id;
+  await fetch("http://localhost:8765/api/meetings/" + mid + "/synced", { method: "POST", body: JSON.stringify({ googleEventId: "e2e" }) });
+  ok("synced -> On calendar live", (await waitFor(C, "On calendar")) >= 0);
+  await fetch("http://localhost:8765/api/meetings/" + mid + "?hard=1", { method: "DELETE" });
   // delete
   await A.evaluate(() => { window.confirm = () => true; }); await A.evaluate(() => { location.hash = "#tasks"; }); await sleep(200);
   await A.evaluate(() => [...document.querySelectorAll("#list .row .title")].find((e) => e.textContent === "E2E from Ariel").click());

@@ -5,7 +5,7 @@ const SCOLOR = { Open: "var(--s-open)", "In Progress": "var(--s-prog)", Review: 
 const I = (p, c = "ic") => `<svg class="${c}" viewBox="0 0 16 16" aria-hidden="true">${p}</svg>`;
 const ICONS = { caret: '<path d="M4.5 6.5 8 10l3.5-3.5"/>', prev: '<path d="M9.5 4 5.5 8l4 4"/>', next: '<path d="M6.5 4l4 4-4 4"/>', cal: '<rect x="2.5" y="3.5" width="11" height="10" rx="2"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/>', clock: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/>', inbox: '<path d="M2.5 9.5 4 4a1.5 1.5 0 0 1 1.4-1h5.2A1.5 1.5 0 0 1 12 4l1.5 5.5v2a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M2.5 9.5h3l.8 1.5h3.4l.8-1.5h3"/>', list: '<path d="M3 4.5h10M3 8h10M3 11.5h6"/>', board: '<rect x="2.5" y="3" width="4" height="10" rx="1.2"/><rect x="9.5" y="3" width="4" height="6" rx="1.2"/>' };
 const $ = (s) => document.querySelector(s);
-let data = { tasks: [], hours: {} }, tab = "tasks", ownerF = "", selDay = "", demo = false;
+let data = { tasks: [], hours: {}, meetings: [] }, tab = "tasks", ownerF = "", selDay = "", demo = false;
 const closed = new Set(); const today = new Date(); const iso = (d) => d.toLocaleDateString("en-CA");
 const TODAY = iso(today); let cur = new Date(today.getFullYear(), today.getMonth(), 1);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -62,17 +62,18 @@ function renderBoard(list) {
 function renderCal() {
   const y = cur.getFullYear(), m = cur.getMonth(), first = new Date(y, m, 1), start = new Date(y, m, 1 - ((first.getDay() + 6) % 7));
   const by = {}; for (const t of data.tasks) if (t.due) (by[t.due] ||= []).push(t);
+  const mby = {}; for (const m of liveMeetings()) (mby[iso(new Date(m.start))] ||= []).push(m);
   let cells = "";
   for (let i = 0; i < 42; i++) {
-    const d = new Date(start); d.setDate(start.getDate() + i); const k = iso(d), ts = by[k] || [];
+    const d = new Date(start); d.setDate(start.getDate() + i); const k = iso(d), tk = by[k] || [], ms = mby[k] || [], ts = [...ms, ...tk];
     if (i >= 35 && d.getMonth() !== m) break;
-    cells += `<button class="cell ${d.getMonth() !== m ? "out" : ""} ${k === TODAY ? "today" : ""} ${k === selDay ? "sel" : ""}" data-day="${k}"><span class="n">${d.getDate()}</span><span class="evs">${ts.slice(0, 2).map((t) => `<i class="ev ${t.status === "Done" ? "done" : pri(t)}">${esc(t.title)}</i>`).join("")}${ts.length > 2 ? `<i class="more">+${ts.length - 2} more</i>` : ""}</span></button>`;
+    cells += `<button class="cell ${d.getMonth() !== m ? "out" : ""} ${k === TODAY ? "today" : ""} ${k === selDay ? "sel" : ""}" data-day="${k}"><span class="n">${d.getDate()}</span><span class="evs">${ts.slice(0, 2).map((t) => t.start ? `<i class="ev mtg" title="Meeting">${hm(t.start)} ${esc(t.title)}</i>` : `<i class="ev ${t.status === "Done" ? "done" : pri(t)}">${esc(t.title)}</i>`).join("")}${ts.length > 2 ? `<i class="more">+${ts.length - 2} more</i>` : ""}</span></button>`;
   }
   $("#cal").innerHTML = `<div class="chead"><h3>${cur.toLocaleDateString("en-US", { month: "long", year: "numeric" })}</h3><div class="nav"><button data-nav="-1" aria-label="Previous month">←</button><button data-nav="0">Today</button><button data-nav="1" aria-label="Next month">→</button></div></div>
   <div class="cgrid">${["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => `<div class="dow">${d}</div>`).join("")}${cells}</div>`;
-  const ts = selDay ? data.tasks.filter((t) => t.due === selDay) : [];
+  const ts = selDay ? data.tasks.filter((t) => t.due === selDay) : [], dm = selDay ? liveMeetings().filter((m) => iso(new Date(m.start)) === selDay) : [];
   $("#day").innerHTML = selDay ? `<h3>${pd(selDay).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</h3>
-   ${ts.map((t) => `<div class="drow ${t.status === "Done" ? "done" : ""}" data-id="${t.id}"><input type="checkbox" class="cb" data-chk="${t.id}" ${t.status === "Done" ? "checked" : ""}><span class="t">${esc(t.title)}</span>${av(t.owner)}</div>`).join("") || `<div class="nothing">Nothing due this day. A nice open one.</div>`}
+   ${dm.map((m) => `<div class="drow mtgrow" data-mid="${m.id}"><span class="tm">${hm(m.start)}</span><span class="t">${esc(m.title)} <span class="mstat ms-${m.status.replace(/ /g, "")}">${m.status === "requested" ? "Requested" : "On calendar"}</span></span></div>`).join("")}${ts.map((t) => `<div class="drow ${t.status === "Done" ? "done" : ""}" data-id="${t.id}"><input type="checkbox" class="cb" data-chk="${t.id}" ${t.status === "Done" ? "checked" : ""}><span class="t">${esc(t.title)}</span>${av(t.owner)}</div>`).join("") || dm.length ? "" : `<div class="nothing">Nothing due this day. A nice open one.</div>`}
    <form class="dayadd" id="dayAdd" autocomplete="off"><input placeholder="Add task for this day…" id="dayTitle"><button class="primary sm">Add</button></form>`
    : `<div class="pick">Pick a day to see what is on it, or add something new.</div>`;
 }
@@ -82,13 +83,13 @@ function renderHours() {
     return `<div class="hp"><div class="hrow"><b>${p}</b><small>${h} / ${TARGET}h</small><input type="number" min="0" step="0.5" placeholder="0" data-p="${p}" value="${h || ""}"></div><div class="prog"><i style="width:${pct}%"></i></div></div>`;
   }).join("");
 }
-const TABS = ["tasks", "calendar", "board", "hours"];
+const TABS = ["tasks", "calendar", "board", "meetings", "hours"];
 function render() {
   const list = filtered();
   for (const t of TABS) { $("#p" + t[0].toUpperCase() + t.slice(1)).hidden = t !== tab; }
   document.querySelectorAll("#tabs a").forEach((a) => { const on = a.dataset.tab === tab; a.classList.toggle("on", on); on ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"); });
   $("#ownerChips").innerHTML = ["", ...OWNERS].map((o) => `<button class="chip ${o === ownerF ? "on" : ""}" data-owner="${o}">${o || "Everyone"}</button>`).join("");
-  renderList(list); upNext(); renderBoard(data.tasks); renderCal(); renderHours();
+  renderList(list); upNext(); renderBoard(data.tasks); renderCal(); renderMeetings(); renderHours();
 }
 function readHash() {
   const p = location.hash.slice(1).toLowerCase().split(/[&?\/,-]+/);
@@ -113,6 +114,8 @@ function applyDemo() {
   Object.assign(T[5], { owner: "Myles", due: off(9) });
   Object.assign(T[6], { owner: "Can", status: "Done", due: off(-3) });
   Object.assign(T[7], { owner: "Ariel", due: off(13) });
+  const mt = (n, h, dur, title, at, st, extra = {}) => { const s = new Date(today); s.setDate(s.getDate() + n); s.setHours(h, 0, 0, 0); return { id: "demo" + title, title, start: s.toISOString(), end: new Date(+s + dur * 6e4).toISOString(), attendees: at, notes: "", meet: true, reminderMinutes: 10, status: st, googleEventId: null, ...extra }; };
+  data.meetings = [mt(1, 10, 30, "Natrion memo review", ["Myles", "Ariel"], "on calendar", { reminderMinutes: 60 }), mt(3, 14, 60, "Intern sync", ["Myles", "Ariel", "Can"], "requested"), mt(2, 11, 30, "KairosLive facts walkthrough", ["Can"], "on calendar", { notes: "Bring the facts file" })];
   data.hours["Ariel|" + WEEK] = 9; data.hours["Can|" + WEEK] = 12.5;
 }
 function greet() {
@@ -135,7 +138,66 @@ function setupSync() {
     try { do { again = false; data = await Store.load(); render(); } while (again); } catch {} busy = false; paint();
   });
 }
+
+// ---- meetings
+const PEOPLE = ["Myles", "Ariel", "Can"];
+const liveMeetings = () => (data.meetings || []).filter((m) => m.status !== "cancelled");
+const hm = (s) => new Date(s).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }).replace(":00", "").replace(" ", "").toLowerCase();
+const RLBL = { 10: "10 min before", 60: "1 hour before", 1440: "1 day before" };
+const SLBL = { requested: "Requested", "on calendar": "On calendar", cancelled: "Cancelled" };
+function mrow(m) {
+  const d = new Date(m.start), dur = Math.round((new Date(m.end) - d) / 6e4), gone = m.status === "cancelled";
+  const durL = dur >= 60 ? (dur / 60) + " hr" : dur + " min";
+  return `<div class="mrow ${gone ? "gone" : ""}" data-mid="${m.id}"><div class="mdate"><b>${d.getDate()}</b><span>${d.toLocaleDateString("en-US", { month: "short" })}</span></div>
+  <div style="min-width:0"><div class="mt">${esc(m.title)} <span class="mstat ms-${m.status.replace(/ /g, "")}">${SLBL[m.status]}</span></div>
+  <div class="msub">${d.toLocaleDateString("en-US", { weekday: "short" })} · ${hm(m.start)} to ${hm(m.end)} · ${durL}${m.meet ? " · Google Meet" : ""}${RLBL[m.reminderMinutes] ? " · Reminder " + RLBL[m.reminderMinutes] : ""}</div>
+  <div class="msub">${m.attendees.length ? esc(m.attendees.join(", ")) : "No attendees"}${m.notes ? " · " + esc(m.notes) : ""}</div></div>
+  <div class="mbtns">${gone ? "" : `<button data-medit="${m.id}">Edit</button><button class="danger" data-mcancel="${m.id}">Cancel</button>`}</div></div>`;
+}
+function renderMeetings() {
+  const now = Date.now(), all = (data.meetings || []).slice().sort((a, b) => a.start.localeCompare(b.start));
+  const up = all.filter((m) => m.status !== "cancelled" && new Date(m.end) >= now), past = all.filter((m) => m.status !== "cancelled" && new Date(m.end) < now).reverse(), gone = all.filter((m) => m.status === "cancelled");
+  const grp = (h, l, open) => l.length || open ? `<div class="mgroup"><h2>${h}<span class="count">${l.length}</span></h2>${l.map(mrow).join("") || `<div class="empty">No upcoming meetings. Schedule one above.</div>`}</div>` : "";
+  $("#mlist").innerHTML = grp("Upcoming", up, true) + grp("Past", past) + grp("Cancelled", gone);
+}
+function mReset() {
+  const f = $("#mform"); f.reset(); f.dataset.id = ""; $("#mfTitle").textContent = "Schedule a meeting"; $("#mSave").textContent = "Request meeting"; $("#mReset").hidden = true; $("#mErr").textContent = "";
+  f.elements.date.value = TODAY; f.querySelectorAll("#mWho input").forEach((c) => (c.checked = false));
+}
+function mEdit(m) {
+  const f = $("#mform"), s = new Date(m.start), pad = (n) => String(n).padStart(2, "0"); mReset(); f.dataset.id = m.id;
+  f.elements.title.value = m.title; f.elements.date.value = iso(s); f.elements.time.value = pad(s.getHours()) + ":" + pad(s.getMinutes());
+  const dur = Math.round((new Date(m.end) - s) / 6e4); if (![...f.elements.duration.options].some((o) => +o.value === dur)) f.elements.duration.add(new Option(dur + " min", dur)); f.elements.duration.value = dur;
+  const known = m.attendees.filter((a) => PEOPLE.includes(a));
+  f.querySelectorAll("#mWho input").forEach((c) => (c.checked = known.includes(c.value)));
+  f.elements.extra.value = m.attendees.filter((a) => !PEOPLE.includes(a)).join(", "); f.elements.notes.value = m.notes || "";
+  f.elements.meet.checked = !!m.meet; f.elements.reminder.value = String(m.reminderMinutes || 0);
+  $("#mfTitle").textContent = "Edit meeting"; $("#mSave").textContent = "Save changes (re-sync)"; $("#mReset").hidden = false; f.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function setupMeetings() {
+  $("#mWho").innerHTML = PEOPLE.map((n) => `<label><input type="checkbox" value="${n}"> ${n}</label>`).join(""); mReset();
+  $("#mReset").onclick = mReset;
+  $("#mform").addEventListener("submit", async (e) => {
+    e.preventDefault(); const f = e.target, el = f.elements, err = $("#mErr"); err.textContent = "";
+    const extra = el.extra.value.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean), bad = extra.find((x) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x));
+    if (bad) { err.textContent = `"${bad}" is not a valid email.`; return; }
+    const start = new Date(el.date.value + "T" + el.time.value); if (isNaN(start)) { err.textContent = "Pick a date and time."; return; }
+    const end = new Date(+start + +el.duration.value * 6e4);
+    const who = [...f.querySelectorAll("#mWho input:checked")].map((c) => c.value), m = f.dataset.id ? { ...(data.meetings || []).find((x) => x.id === f.dataset.id) } : {};
+    Object.assign(m, { title: el.title.value.trim(), start: start.toISOString(), end: end.toISOString(), attendees: [...who, ...extra.filter((x) => !who.includes(x))], notes: el.notes.value.trim(), meet: el.meet.checked, reminderMinutes: +el.reminder.value });
+    if (f.dataset.id) delete m.status;
+    try { await Store.saveMeeting(m); } catch { err.textContent = "Could not save. Check connection."; return; }
+    mReset(); refresh();
+  });
+  document.addEventListener("click", async (e) => {
+    const g = e.target, ed = g.closest("[data-medit]"), cn = g.closest("[data-mcancel]"), dr = g.closest(".mtgrow");
+    if (ed) mEdit(data.meetings.find((m) => m.id === ed.dataset.medit));
+    else if (cn && confirm("Cancel this meeting?")) { await Store.cancelMeeting(cn.dataset.mcancel); refresh(); }
+    else if (dr) { location.hash = "#meetings"; mEdit(data.meetings.find((m) => m.id === dr.dataset.mid)); }
+  });
+}
 async function init() {
+  setupMeetings();
   readHash(); setupSync();
   greet();
   $("#fStatus").innerHTML = opts(STATUSES, "All statuses");

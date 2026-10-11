@@ -132,3 +132,39 @@ dialog label input,dialog label select,dialog label textarea{display:block;width
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
 .actions{display:flex;gap:8px;margin-top:8px}.actions span{flex:1}
 @media(max-width:700px){.app{padding:0 16px}.top{padding-top:32px}.meta .due,.meta .status,.oname{display:none}.own{min-width:0}#board{grid-template-columns:1fr}.cell{min-height:60px;padding:4px}.ev{display:none}.greet span{display:block;margin:2px 0 0;padding:0;border:0}}
+
+/* meetings */
+.mnote{margin:0 0 18px;color:var(--mut);font-size:13px;padding-left:12px;border-left:3px solid var(--acc)}
+.mcard,.mgroup{background:var(--card);border-radius:var(--r);box-shadow:var(--sh);border:1px solid #f2eee6}
+.mcard{padding:22px 26px 20px;margin-bottom:26px}
+.mcard h2,.mgroup h2{font-family:var(--serif);font-size:19px;margin-bottom:16px}
+.mcard label{display:block;font-size:12px;color:var(--mut);margin-bottom:14px}
+.mcard label small{color:#b0a99c}
+.mcard label input:not([type=checkbox]),.mcard label select,.mcard label textarea{display:block;width:100%;margin-top:5px;color:var(--ink);font-size:14px}
+.grid3{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:0 16px}
+.fl{font-size:12px;color:var(--mut);margin-bottom:6px}
+.who{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.who label{margin:0;display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--ink);border:1px solid #e6e0d5;border-radius:999px;padding:5px 14px 5px 10px;cursor:pointer;transition:background .15s,border-color .15s}
+.who label:has(input:checked){background:var(--accbg);border-color:var(--acc);color:var(--accd)}
+.mcard input[type=checkbox]{accent-color:var(--acc);width:15px;height:15px;margin:0}
+.mopts{display:grid;grid-template-columns:1fr 1fr;gap:0 16px;align-items:end}
+.mopts .chk{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink);padding-bottom:10px}
+.merr{color:var(--terra);font-size:12.5px;align-self:center}
+.mgroup{padding:8px 22px 10px;margin-bottom:20px}
+.mgroup h2{padding-top:14px;margin-bottom:6px;display:flex;gap:10px;align-items:baseline}
+.mrow{display:grid;grid-template-columns:64px 1fr auto;gap:16px;align-items:center;padding:14px 0}
+.mrow+.mrow{box-shadow:0 -1px 0 var(--line)}
+.mrow.gone .mt{text-decoration:line-through;color:var(--mut)}
+.mdate{text-align:center;line-height:1.15}
+.mdate b{display:block;font-family:var(--serif);font-size:24px;font-weight:500}
+.mdate span{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut)}
+.mt{font-weight:500}
+.msub{color:var(--mut);font-size:12.5px;margin-top:1px}
+.mbtns{display:flex;gap:8px;align-items:center}
+.mbtns button{padding:4px 12px;font-size:12.5px}
+.mstat{display:inline-block;padding:1px 10px;border-radius:999px;font-size:11.5px;font-weight:500;line-height:20px}
+.ms-requested{background:#f5ecd4;color:#7f6529}.ms-oncalendar{background:#e5ede7;color:#4d6c5a}.ms-cancelled{background:#f0ece4;color:#8b8478}
+.ev.mtg{background:#e1eaef;color:#3f5a6a;border-left:3px solid #7f9fb2;border-radius:3px 6px 6px 3px}
+.ev.mtg.gone{display:none}
+.drow.mtgrow{cursor:pointer}.drow .tm{color:#4b6877;font-size:12px;min-width:64px}
+@media(max-width:700px){.grid3,.mopts{grid-template-columns:1fr}.mrow{grid-template-columns:48px 1fr}.mbtns{grid-column:2}.ev.mtg{display:none}}

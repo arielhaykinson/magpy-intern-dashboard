@@ -16,9 +16,9 @@ if (!db || !Array.isArray(db.tasks)) {
   db = { seeded: true, tasks: seedTasks(), hours: {}, tombstones: {} };
   persist();
 }
-db.hours ||= {}; db.tombstones ||= {};
+db.hours ||= {}; db.tombstones ||= {}; db.meetings ||= [];
 function persist() { const tmp = DB + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(db, null, 1)); fs.renameSync(tmp, DB); dirty = true; }
-const view = () => ({ tasks: db.tasks, hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])) });
+const view = () => ({ tasks: db.tasks, meetings: db.meetings, hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])) });
 
 // Backups: on start and every 10 min if changed; keep newest 48.
 function backup() {
@@ -35,6 +35,25 @@ setInterval(() => { for (const r of clients) r.write(": ping\n\n"); }, 15000).un
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".png": "image/png", ".svg": "image/svg+xml", ".json": "application/json" };
 const body = (req) => new Promise((ok, no) => { let b = ""; req.on("data", (c) => { b += c; if (b.length > 1e6) { no(new Error("big")); req.destroy(); } }); req.on("end", () => { try { ok(JSON.parse(b || "{}")); } catch (e) { no(e); } }); });
 const send = (res, code, obj) => { res.writeHead(code, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify(obj)); };
+
+// Meetings. Stored only; syncing to Google Calendar is done by an external helper via /api/meetings/pending + /synced.
+const MSTAT = ["requested", "on calendar", "cancelled"], RMIN = [0, 10, 60, 1440];
+const mid = () => "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const isoOk = (s) => typeof s === "string" && !isNaN(Date.parse(s));
+function cleanMeeting(m, cur, by) {
+  const o = cur ? { ...cur } : { id: mid(), googleEventId: null, createdBy: by || "", status: "requested", meetLink: null };
+  const src = cur ? { ...cur, ...m } : m;
+  if (typeof src.title !== "string" || !src.title.trim()) return { error: "title required" };
+  if (!isoOk(src.start) || !isoOk(src.end)) return { error: "start/end must be ISO date-time strings" };
+  if (Date.parse(src.end) <= Date.parse(src.start)) return { error: "end must be after start" };
+  o.title = src.title.trim(); o.start = new Date(src.start).toISOString(); o.end = new Date(src.end).toISOString();
+  o.attendees = (Array.isArray(src.attendees) ? src.attendees : []).map((a) => String(a).trim()).filter(Boolean);
+  o.notes = String(src.notes ?? ""); o.meet = !!src.meet;
+  o.reminderMinutes = RMIN.includes(+src.reminderMinutes) ? +src.reminderMinutes : 0;
+  if (m.createdBy && !cur) o.createdBy = String(m.createdBy);
+  return { m: o };
+}
+const touch = (m) => { m.updatedAt = Date.now(); return m; };
 const FIELDS = ["title", "status", "owner", "due", "priority", "area", "notes"];
 
 http.createServer(async (req, res) => {
@@ -65,8 +84,40 @@ http.createServer(async (req, res) => {
       if (db.hours[key] && db.hours[key].updatedAt > at) return send(res, 200, { applied: false });
       db.hours[key] = { value: +value, updatedAt: at }; persist(); broadcast(by); return send(res, 200, { applied: true });
     }
+    if (p === "/api/meetings" && req.method === "GET") return send(res, 200, { meetings: db.meetings });
+    if (p === "/api/meetings" && req.method === "POST") {
+      const r = cleanMeeting(await body(req), null, by); if (r.error) return send(res, 400, r);
+      db.meetings.push(touch(r.m)); persist(); broadcast(by); return send(res, 201, { meeting: r.m });
+    }
+    if (p === "/api/meetings/pending" && req.method === "GET") {
+      const inc = url.searchParams.get("include") === "cancelled";
+      return send(res, 200, { meetings: db.meetings.filter((m) => m.status === "requested" || (inc && m.status === "cancelled" && m.googleEventId)) });
+    }
+    let mm = p.match(/^\/api\/meetings\/([^/]+)(\/synced)?$/);
+    if (mm) {
+      const id = decodeURIComponent(mm[1]), i = db.meetings.findIndex((x) => x.id === id), cur = db.meetings[i];
+      if (!cur) return send(res, 404, { error: "no such meeting" });
+      if (mm[2] && req.method === "POST") {
+        const b = await body(req); cur.googleEventId = b.googleEventId ?? null;
+        if (b.meetLink !== undefined) cur.meetLink = b.meetLink || null;
+        if (cur.status !== "cancelled") cur.status = "on calendar";
+        touch(cur); persist(); broadcast(by); return send(res, 200, { meeting: cur });
+      }
+      if (!mm[2] && req.method === "GET") return send(res, 200, { meeting: cur });
+      if (!mm[2] && req.method === "PUT") {
+        const b = await body(req), r = cleanMeeting(b, cur, by); if (r.error) return send(res, 400, r);
+        // any edit needs re-sync; explicit status (e.g. "cancelled") from the body is honoured
+        r.m.status = MSTAT.includes(b.status) ? b.status : "requested";
+        db.meetings[i] = touch(r.m); persist(); broadcast(by); return send(res, 200, { meeting: r.m });
+      }
+      if (!mm[2] && req.method === "DELETE") {
+        // Soft cancel by default so the helper can remove the Google event; ?hard=1 deletes the record.
+        if (url.searchParams.get("hard") === "1") db.meetings.splice(i, 1); else { cur.status = "cancelled"; touch(cur); }
+        persist(); broadcast(by); return send(res, 200, { ok: true, meeting: url.searchParams.get("hard") === "1" ? null : cur });
+      }
+    }
     if (p === "/api/reset" && req.method === "POST") {
-      db = { seeded: true, tasks: seedTasks(), hours: {}, tombstones: {} }; persist(); broadcast(by); return send(res, 200, { ok: true });
+      db = { seeded: true, tasks: seedTasks(), hours: {}, tombstones: {}, meetings: [] }; persist(); broadcast(by); return send(res, 200, { ok: true });
     }
     if (p.startsWith("/api/")) return send(res, 404, { error: "not found" });
     // static
