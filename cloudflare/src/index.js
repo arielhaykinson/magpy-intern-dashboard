@@ -4,7 +4,12 @@ import { DurableObject } from "cloudflare:workers";
 export default {
   async fetch(request, env) {
     const { pathname } = new URL(request.url);
-    if (pathname.startsWith("/api/")) return env.DASHBOARD.get(env.DASHBOARD.idFromName("main")).fetch(request);
+    if (pathname.startsWith("/api/")) {
+      // Pass current secrets per request: the DO's own env is frozen at construction.
+      const h = new Headers(request.headers);
+      h.set("x-cfg-pw", env.APP_PASSWORD || ""); h.set("x-cfg-ss", env.SESSION_SECRET || "");
+      return env.DASHBOARD.get(env.DASHBOARD.idFromName("main")).fetch(new Request(request, { headers: h }));
+    }
     return env.ASSETS.fetch(request);
   },
 };
@@ -105,8 +110,8 @@ export class Dashboard extends DurableObject {
   }
 
   // ---- auth
-  get password() { return this.env.APP_PASSWORD || ""; }
-  secretP() { return this.env.SESSION_SECRET || (this.password ? "magpy-session|" + this.password : ""); }
+  get password() { return this._pw || ""; }
+  secretP() { return this._ss || (this.password ? "magpy-session|" + this.password : ""); }
   async makeSession() { const exp = String(Date.now() + SESSION_MS); return exp + "." + (await hmac(this.secretP(), "v1." + exp)); }
   async hasSession(request) {
     const m = /(?:^|;\s*)magpy_session=([^;]+)/.exec(request.headers.get("cookie") || ""); if (!m) return false;
@@ -117,6 +122,7 @@ export class Dashboard extends DurableObject {
 
   async fetch(request) {
     await this.init();
+    this._pw = request.headers.get("x-cfg-pw") || ""; this._ss = request.headers.get("x-cfg-ss") || "";
     try { return await this.route(request); } catch (e) { return this.json(500, { error: String(e.message || e) }); }
   }
   json(code, obj, headers) { return new Response(JSON.stringify(obj), { status: code, headers: { "content-type": "application/json", "cache-control": "no-store", ...headers } }); }
