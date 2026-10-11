@@ -1,0 +1,14 @@
+{
+  "name": "magpy-dashboard-cloudflare",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "sync": "node sync-public.js",
+    "dev": "npm run sync && wrangler dev",
+    "deploy": "npm run sync && wrangler deploy",
+    "test": "node test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.149.0"
+  }
+}
