@@ -27,10 +27,10 @@ if (!db.priorityMigrated) {
   for (const t of db.tasks) if (M.includes(t.title) && t.priority === "High" && t.status === "Open" && t.owner === "Unassigned" && !t.due && t.area === "Magpy" && !t.notes && base && Math.abs(t.updatedAt - base) < 50) { t.priority = "Medium"; t.updatedAt = Date.now(); }
   db.priorityMigrated = true; migrated = true;
 }
-db.hours ||= {}; db.tombstones ||= {}; db.meetings ||= [];
+db.hours ||= {}; db.tombstones ||= {}; db.meetings ||= []; db.asks ||= [];
 function persist() { const tmp = DB + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(db, null, 1)); fs.renameSync(tmp, DB); dirty = true; }
 if (migrated) persist();
-const view = () => ({ tasks: db.tasks, meetings: db.meetings, hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])) });
+const view = () => ({ tasks: db.tasks, meetings: db.meetings, asks: db.asks, hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])) });
 
 // Backups: on start and every 10 min if changed; keep newest 48.
 function backup() {
@@ -66,6 +66,7 @@ function cleanMeeting(m, cur, by) {
   return { m: o };
 }
 const touch = (m) => { m.updatedAt = Date.now(); return m; };
+const aid = () => "a" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const FIELDS = ["title", "status", "owner", "due", "priority", "area", "notes"];
 
 http.createServer(async (req, res) => {
@@ -128,8 +129,22 @@ http.createServer(async (req, res) => {
         persist(); broadcast(by); return send(res, 200, { ok: true, meeting: url.searchParams.get("hard") === "1" ? null : cur });
       }
     }
+    if (p === "/api/asks" && req.method === "GET") return send(res, 200, { asks: db.asks });
+    if (p === "/api/asks" && req.method === "POST") {
+      const b = await body(req), text = typeof b.text === "string" ? b.text.trim() : "";
+      if (!text) return send(res, 400, { error: "text required" }); if (text.length > 2000) return send(res, 400, { error: "text too long (max 2000)" });
+      const a = { id: aid(), text, createdBy: String(b.createdBy || by || "").slice(0, 40), createdAt: new Date().toISOString(), status: "new", reply: null, repliedAt: null };
+      db.asks.push(a); persist(); broadcast(by); return send(res, 201, { ask: a });
+    }
+    if (p === "/api/asks/pending" && req.method === "GET") return send(res, 200, { asks: db.asks.filter((a) => a.status === "new") });
+    const am = p.match(/^\/api\/asks\/([^/]+)\/reply$/);
+    if (am && req.method === "POST") {
+      const a = db.asks.find((x) => x.id === decodeURIComponent(am[1])); if (!a) return send(res, 404, { error: "no such ask" });
+      const b = await body(req); if (typeof b.reply !== "string" || !b.reply.trim()) return send(res, 400, { error: "reply required" });
+      a.reply = b.reply.trim(); a.status = "handled"; a.repliedAt = new Date().toISOString(); persist(); broadcast(by); return send(res, 200, { ask: a });
+    }
     if (p === "/api/reset" && req.method === "POST") {
-      db = { seeded: true, tasks: seedTasks(), hours: {}, tombstones: {}, meetings: [] }; persist(); broadcast(by); return send(res, 200, { ok: true });
+      db = { seeded: true, tasks: seedTasks(), hours: {}, tombstones: {}, meetings: [], asks: db.asks }; persist(); broadcast(by); return send(res, 200, { ok: true });
     }
     if (p.startsWith("/api/")) return send(res, 404, { error: "not found" });
     // static

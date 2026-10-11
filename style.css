@@ -173,3 +173,24 @@ dialog label input,dialog label select,dialog label textarea{display:block;width
 .ev.mtg.gone{display:none}
 .drow.mtgrow{cursor:pointer}.drow .tm{color:#4b6877;font-size:12px;min-width:64px}
 @media(max-width:700px){.grid3,.mopts{grid-template-columns:1fr}.mrow{grid-template-columns:48px 1fr}.mbtns{grid-column:2}.ev.mtg{display:none}}
+
+/* ask */
+.askcard{background:var(--card);border-radius:var(--r);box-shadow:var(--sh);border:1px solid #f2eee6;padding:20px 22px 18px}
+.thread{max-height:56vh;min-height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:18px;padding:4px 4px 8px}
+.ask{display:flex;flex-direction:column;gap:8px}
+.bub{max-width:82%;padding:10px 15px;border-radius:16px}
+.bub p{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.bwho{display:flex;align-items:center;gap:8px;font-size:12px}.bwho small{color:var(--mut)}
+.bub.me{align-self:flex-end;background:#f4f0e8;border-bottom-right-radius:5px}
+.bub.bot{align-self:flex-start;background:var(--accbg);border-bottom-left-radius:5px}
+.wait{align-self:flex-end;font-size:12px;color:var(--mut);display:flex;align-items:center;gap:7px;padding-right:6px}
+.dot{width:7px;height:7px;border-radius:50%;background:#d8a46a;animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.dot{animation:none}}
+.empty{color:var(--mut);text-align:center;margin:36px 0}
+.prompts{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 10px;padding-top:14px;border-top:1px solid var(--line)}
+.pchip{font-size:12.5px;color:var(--accd);background:var(--accbg);border-color:transparent}
+.pchip:hover{background:#e4ece5;border-color:transparent}
+.askform{display:flex;gap:10px;align-items:flex-end}
+.askform textarea{flex:1;resize:none;padding:11px 14px;border-radius:12px;max-height:120px;line-height:1.45}
+.askform button{padding:9px 20px}

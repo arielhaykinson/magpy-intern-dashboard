@@ -5,7 +5,7 @@ const SCOLOR = { Open: "var(--s-open)", "In Progress": "var(--s-prog)", Review: 
 const I = (p, c = "ic") => `<svg class="${c}" viewBox="0 0 16 16" aria-hidden="true">${p}</svg>`;
 const ICONS = { caret: '<path d="M4.5 6.5 8 10l3.5-3.5"/>', prev: '<path d="M9.5 4 5.5 8l4 4"/>', next: '<path d="M6.5 4l4 4-4 4"/>', cal: '<rect x="2.5" y="3.5" width="11" height="10" rx="2"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/>', clock: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/>', inbox: '<path d="M2.5 9.5 4 4a1.5 1.5 0 0 1 1.4-1h5.2A1.5 1.5 0 0 1 12 4l1.5 5.5v2a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M2.5 9.5h3l.8 1.5h3.4l.8-1.5h3"/>', list: '<path d="M3 4.5h10M3 8h10M3 11.5h6"/>', board: '<rect x="2.5" y="3" width="4" height="10" rx="1.2"/><rect x="9.5" y="3" width="4" height="6" rx="1.2"/>' };
 const $ = (s) => document.querySelector(s);
-let data = { tasks: [], hours: {}, meetings: [] }, tab = "tasks", ownerF = "", selDay = "", demo = false;
+let data = { tasks: [], hours: {}, meetings: [], asks: [] }, tab = "tasks", ownerF = "", selDay = "", demo = false;
 const closed = new Set(); const today = new Date(); const iso = (d) => d.toLocaleDateString("en-CA");
 const TODAY = iso(today); let cur = new Date(today.getFullYear(), today.getMonth(), 1);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -87,13 +87,14 @@ function renderHours() {
     return `<div class="hp"><div class="hrow"><b>${p}</b><small>${h} / ${TARGET}h</small><input type="number" min="0" step="0.5" placeholder="0" data-p="${p}" value="${h || ""}"></div><div class="prog"><i style="width:${pct}%"></i></div></div>`;
   }).join("");
 }
-const TABS = ["tasks", "calendar", "board", "meetings", "hours"];
+let demoAsks = [];
+const TABS = ["tasks", "calendar", "board", "meetings", "ask", "hours"];
 function render() {
   const list = filtered();
   for (const t of TABS) { $("#p" + t[0].toUpperCase() + t.slice(1)).hidden = t !== tab; }
   document.querySelectorAll("#tabs a").forEach((a) => { const on = a.dataset.tab === tab; a.classList.toggle("on", on); on ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"); });
   $("#ownerChips").innerHTML = ["", ...OWNERS].map((o) => `<button class="chip ${o === ownerF ? "on" : ""}" data-owner="${o}">${o || "Everyone"}</button>`).join("");
-  renderList(list); upNext(); renderBoard(data.tasks); renderCal(); renderMeetings(); renderHours();
+  renderList(list); upNext(); renderBoard(data.tasks); renderCal(); renderMeetings(); renderAsk(); renderHours();
 }
 function readHash() {
   const p = location.hash.slice(1).toLowerCase().split(/[&?\/,-]+/);
@@ -120,6 +121,13 @@ function applyDemo() {
   Object.assign(T[7], { owner: "Ariel", due: off(13) });
   const mt = (n, h, dur, title, at, st, extra = {}) => { const s = new Date(today); s.setDate(s.getDate() + n); s.setHours(h, 0, 0, 0); return { id: "demo" + title, title, start: s.toISOString(), end: new Date(+s + dur * 6e4).toISOString(), attendees: at, notes: "", meet: true, reminderMinutes: 10, status: st, googleEventId: null, ...extra }; };
   data.meetings = [mt(1, 10, 30, "Natrion memo review", ["Myles", "Ariel"], "on calendar", { reminderMinutes: 60 }), mt(3, 14, 60, "Intern sync", ["Myles", "Ariel", "Can"], "requested"), mt(2, 11, 30, "KairosLive facts walkthrough", ["Can"], "on calendar", { notes: "Bring the facts file" })];
+  const ago = (m) => new Date(Date.now() - m * 6e4).toISOString();
+  data.asks = [
+    { id: "da1", text: "Move the Natrion memo to Review", createdBy: "Ariel", createdAt: ago(190), status: "handled", reply: "Done. \"Natrion memo onto the template\" is now in Review.", repliedAt: ago(184) },
+    { id: "da2", text: "Schedule a meeting Tuesday at 2 with Myles and Can", createdBy: "Myles", createdAt: ago(75), status: "handled", reply: "Requested \"Intern sync\" for Tuesday at 2:00 PM with Myles and Can. It will show on the calendar shortly.", repliedAt: ago(70) },
+    { id: "da3", text: "Which tasks are overdue?", createdBy: "Can", createdAt: ago(3), status: "new", reply: null, repliedAt: null },
+    ...demoAsks,
+  ];
   data.hours["Ariel|" + WEEK] = 9; data.hours["Can|" + WEEK] = 12.5;
 }
 function greet() {
@@ -261,3 +269,35 @@ async function init() {
   if (/pmenu/.test(location.hash)) document.querySelectorAll("#upnext [data-pri]")[1]?.click();
 }
 init();
+
+// ---- Ask tab ----
+const PROMPTS = ["Move the Natrion memo to Review", "Schedule a meeting Tuesday at 2", "What's due this week?", "Add a task: Robotaxi primer outline"];
+const esc2 = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const askTime = (iso) => { const d = new Date(iso), t = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }); return d.toDateString() === new Date().toDateString() ? t : d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + ", " + t; };
+let askSig = "";
+function renderAsk() {
+  const el = $("#askThread"), asks = data.asks || [], sig = JSON.stringify(asks) + tab;
+  if (sig === askSig) return; askSig = sig;
+  const near = el.scrollHeight - el.scrollTop - el.clientHeight < 60, first = !el.dataset.done;
+  el.innerHTML = asks.length ? asks.map((a) => `<div class="ask"><div class="bub me"><div class="bwho"><i class="av av-${esc2(a.createdBy)}">${esc2((a.createdBy || "?")[0])}</i><b>${esc2(a.createdBy || "Someone")}</b><small>${askTime(a.createdAt)}</small></div><p>${esc2(a.text)}</p></div>${
+    a.status === "handled" ? `<div class="bub bot"><div class="bwho"><b>Assistant</b><small>${a.repliedAt ? askTime(a.repliedAt) : ""}</small></div><p>${esc2(a.reply || "Done.")}</p></div>` : `<div class="wait"><span class="dot"></span>Waiting for the assistant</div>`}</div>`).join("")
+    : `<p class="empty">Nothing here yet. Ask for something below, like moving a task or scheduling a meeting.</p>`;
+  if (first || near) { el.scrollTop = el.scrollHeight; el.dataset.done = "1"; }
+}
+async function sendAsk() {
+  const ta = $("#askText"), text = ta.value.trim(); if (!text) return;
+  ta.value = ""; ta.style.height = "";
+  if (demo) { demoAsks.push({ id: "dl" + Date.now(), text, createdBy: Store.user() || "Ariel", createdAt: new Date().toISOString(), status: "new", reply: null, repliedAt: null }); await refresh(); $("#askThread").scrollTop = 1e9; return; }
+  try { await Store.sendAsk(text); } catch { ta.value = text; return; }
+  data = await Store.load(); render(); $("#askThread").scrollTop = 1e9;
+}
+(function () {
+  const go = () => {
+    $("#askChips").innerHTML = PROMPTS.map((p) => `<button type="button" class="pchip">${esc2(p)}</button>`).join("");
+    $("#askChips").onclick = (e) => { const b = e.target.closest(".pchip"); if (b) { $("#askText").value = b.textContent; $("#askText").focus(); } };
+    $("#askForm").onsubmit = (e) => { e.preventDefault(); sendAsk(); };
+    $("#askText").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendAsk(); } });
+    $("#askText").addEventListener("input", (e) => { const t = e.target; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px"; });
+  };
+  go();
+})();

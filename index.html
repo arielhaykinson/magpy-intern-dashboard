@@ -1,9 +1,9 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Magpy Interns</title><link rel="stylesheet" href="style.css?v=9"></head><body>
+<title>Magpy Interns</title><link rel="stylesheet" href="style.css?v=10"></head><body>
 <div class="app">
 <header class="top">
  <div class="brand"><h1><span class="mark">Magpy</span> <em>interns</em></h1><p id="greet" class="greet"></p></div>
- <nav class="tabs" id="tabs" role="tablist"><a href="#tasks" data-tab="tasks">Tasks</a><a href="#calendar" data-tab="calendar">Calendar</a><a href="#board" data-tab="board">Board</a><a href="#meetings" data-tab="meetings">Meetings</a><a href="#hours" data-tab="hours">Hours</a></nav>
+ <nav class="tabs" id="tabs" role="tablist"><a href="#tasks" data-tab="tasks">Tasks</a><a href="#calendar" data-tab="calendar">Calendar</a><a href="#board" data-tab="board">Board</a><a href="#meetings" data-tab="meetings">Meetings</a><a href="#ask" data-tab="ask">Ask</a><a href="#hours" data-tab="hours">Hours</a></nav>
 </header>
 <hr class="rule">
 <main class="main">
@@ -40,6 +40,17 @@
    <div class="actions"><span id="mErr" class="merr"></span><button type="button" id="mReset" hidden>Cancel edit</button><button class="primary" id="mSave">Request meeting</button></div>
   </form>
   <div id="mlist"></div>
+ </section>
+ <section id="pAsk" class="pane" hidden>
+  <p class="mnote">Requests are picked up by the assistant within a few minutes.</p>
+  <div class="askcard">
+   <div id="askThread" class="thread" aria-live="polite"></div>
+   <div class="prompts" id="askChips"></div>
+   <form id="askForm" class="askform" autocomplete="off">
+    <textarea id="askText" rows="1" placeholder="Ask the assistant for something…" aria-label="Request for the assistant" maxlength="2000"></textarea>
+    <button class="primary" type="submit">Send</button>
+   </form>
+  </div>
  </section>
  <section id="pHours" class="pane narrow" hidden><div id="hours"></div></section>
 </main>
