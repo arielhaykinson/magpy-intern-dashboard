@@ -30,6 +30,28 @@ const aid = () => "a" + Date.now().toString(36) + Math.random().toString(36).sli
 const actId = () => "x" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const isoOk = (s) => typeof s === "string" && !isNaN(Date.parse(s));
 const touch = (m) => { m.updatedAt = Date.now(); return m; };
+
+// ---- Task docs: [{id, url, title, addedBy, addedAt}], http(s) only, max 20 per task
+const MAX_DOCS = 20;
+function cleanDocs(input, prev, by) {
+  const old = new Map((Array.isArray(prev) ? prev : []).map((d) => [d.id, d])), seen = new Set(), out = [];
+  for (const d of Array.isArray(input) ? input : []) {
+    if (!d || typeof d !== "object" || typeof d.url !== "string") continue;
+    let u; try { u = new URL(d.url.trim()); } catch { continue; }
+    if (u.protocol !== "http:" && u.protocol !== "https:") continue;
+    let id = typeof d.id === "string" && /^[\w-]{1,40}$/.test(d.id) ? d.id : "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    if (seen.has(id)) continue; seen.add(id);
+    const o = old.get(id);
+    out.push(o ? { ...o, title: String(d.title ?? o.title ?? "").trim().slice(0, 120) } : { id, url: u.href.slice(0, 2000), title: String(d.title ?? "").trim().slice(0, 120), addedBy: String(d.addedBy || by || "").slice(0, 40), addedAt: new Date().toISOString() });
+    if (out.length >= MAX_DOCS) break;
+  }
+  return out;
+}
+const docLabel = (d) => { try { const u = new URL(d.url), p = u.pathname; return d.title || (u.hostname === "docs.google.com" ? (p.startsWith("/document") ? "Doc" : p.startsWith("/presentation") ? "Slides" : p.startsWith("/spreadsheets") ? "Sheet" : "Doc") : u.hostname.replace(/^www\./, "")); } catch { return d.title || "doc"; } };
+function logDocs(lg, by, cur, nt) {
+  const had = new Set(((cur && cur.docs) || []).map((d) => d.id));
+  for (const d of nt.docs) if (!had.has(d.id)) lg(by, "doc", nt, "attached a doc: " + docLabel(d));
+}
 const FIELDS = ["title", "status", "owner", "due", "priority", "area", "notes"];
 const LBL = { status: "status", priority: "priority", owner: "owner", due: "due date" };
 const SESSION_MS = 30 * 24 * 3600 * 1000, COOKIE = "magpy_session", FAIL_MAX = 5, FAIL_WIN = 10 * 60 * 1000;
@@ -161,7 +183,8 @@ export class Dashboard extends DurableObject {
       const i = db.tasks.findIndex((x) => x.id === t.id), cur = db.tasks[i];
       if ((cur && cur.updatedAt > t.updatedAt) || (db.tombstones[t.id] || 0) > t.updatedAt) return send(200, { applied: false, task: cur || null });
       const nt = { id: t.id, updatedAt: t.updatedAt }; for (const k of FIELDS) nt[k] = String(t[k] ?? ""); nt.priority = normPri(nt.priority);
-      this.logTaskChange(by, cur, nt); i >= 0 ? (db.tasks[i] = nt) : db.tasks.push(nt); delete db.tombstones[t.id];
+      nt.docs = cleanDocs(t.docs === undefined ? (cur && cur.docs) : t.docs, cur && cur.docs, by);
+      this.logTaskChange(by, cur, nt); logDocs((...a) => this.log(...a), by, cur, nt); i >= 0 ? (db.tasks[i] = nt) : db.tasks.push(nt); delete db.tombstones[t.id];
       this.mark("tasks", "tombstones"); return this.done(by, 200, { applied: true, task: nt });
     }
     if (p.startsWith("/api/task/") && M === "DELETE") {

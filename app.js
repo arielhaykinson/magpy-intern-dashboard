@@ -5,7 +5,7 @@ const SCOLOR = { Open: "var(--s-open)", "In Progress": "var(--s-prog)", Review: 
 const I = (p, c = "ic") => `<svg class="${c}" viewBox="0 0 16 16" aria-hidden="true">${p}</svg>`;
 const ICONS = { caret: '<path d="M4.5 6.5 8 10l3.5-3.5"/>', prev: '<path d="M9.5 4 5.5 8l4 4"/>', next: '<path d="M6.5 4l4 4-4 4"/>', cal: '<rect x="2.5" y="3.5" width="11" height="10" rx="2"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/>', clock: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/>', inbox: '<path d="M2.5 9.5 4 4a1.5 1.5 0 0 1 1.4-1h5.2A1.5 1.5 0 0 1 12 4l1.5 5.5v2a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M2.5 9.5h3l.8 1.5h3.4l.8-1.5h3"/>', list: '<path d="M3 4.5h10M3 8h10M3 11.5h6"/>', board: '<rect x="2.5" y="3" width="4" height="10" rx="1.2"/><rect x="9.5" y="3" width="4" height="6" rx="1.2"/>' };
 const $ = (s) => document.querySelector(s);
-let data = { tasks: [], hours: {}, meetings: [], asks: [], comments: {}, activity: [] }, tab = "tasks", ownerF = "", selDay = "", demo = false;
+let authRequired = false, data = { tasks: [], hours: {}, meetings: [], asks: [], comments: {}, activity: [] }, tab = "tasks", ownerF = "", selDay = "", demo = false;
 const closed = new Set(); const today = new Date(); const iso = (d) => d.toLocaleDateString("en-CA");
 const TODAY = iso(today); let cur = new Date(today.getFullYear(), today.getMonth(), 1);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -35,10 +35,40 @@ function dueChip(t) {
   const lbl = diff === 0 ? "Today" : diff === 1 ? "Tomorrow" : fmt(t.due);
   return `<span class="due ${cls}">${done ? "" : diff < 0 ? "Overdue · " : ""}${lbl}</span>`;
 }
+// ---- Task docs
+const DOC_MAX = 20; let docsDraft = [];
+const docKind = (u) => { try { const x = new URL(u), p = x.pathname; if (x.hostname === "docs.google.com") return p.startsWith("/presentation") ? "Slides" : p.startsWith("/spreadsheets") ? "Sheet" : "Doc"; return x.hostname.replace(/^www\./, ""); } catch { return "Link"; } };
+const docName = (d) => d.title || docKind(d.url);
+const safeUrl = (u) => /^https?:\/\//i.test(u) ? u : "#";
+const docChip = (t, inl) => (t.docs && t.docs.length) ? `<span class="docchip${inl ? " inl" : ""}" title="${esc(t.docs.map(docName).join(", "))}">📎 ${t.docs.length} ${t.docs.length === 1 ? "doc" : "docs"}</span>` : "";
+function renderDocs() {
+  $("#docN").textContent = docsDraft.length;
+  $("#docList").innerHTML = docsDraft.map((d) => `<li><a href="${esc(safeUrl(d.url))}" target="_blank" rel="noopener noreferrer">${d.title ? `<span class="dk">${esc(docKind(d.url).slice(0, 14))}</span>` : ""}${esc(docName(d))}</a><button type="button" class="dx" data-docdel="${esc(d.id)}" aria-label="Remove ${esc(docName(d))}">Remove</button></li>`).join("");
+  $("#docAdd").disabled = docsDraft.length >= DOC_MAX;
+}
+async function persistDocs() {
+  const id = $("#form").dataset.id; if (!id) return;
+  const t = data.tasks.find((x) => x.id === id); if (!t) return;
+  t.docs = docsDraft.slice();
+  if (demo) { render(); return; }
+  try { await Store.saveTask({ ...t, docs: docsDraft }); data = await Store.load(); const n = data.tasks.find((x) => x.id === id); if (n) docsDraft = (n.docs || []).slice(); render(); } catch {}
+}
+async function addDoc() {
+  const u = $("#docUrl"), ti = $("#docTitle"), v = u.value.trim();
+  if (!/^https?:\/\/\S+$/i.test(v)) { u.setCustomValidity("Paste a full link starting with http:// or https://"); u.reportValidity(); u.setCustomValidity(""); return; }
+  if (docsDraft.length >= DOC_MAX) return;
+  docsDraft.push({ id: "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), url: v, title: ti.value.trim().slice(0, 120), addedBy: Store.user() || "Ariel", addedAt: new Date().toISOString() });
+  u.value = ""; ti.value = ""; renderDocs(); persistDocs(); u.focus();
+}
+document.addEventListener("click", (e) => {
+  if (e.target.closest("#docAdd")) { addDoc(); return; }
+  const x = e.target.closest("[data-docdel]"); if (x) { docsDraft = docsDraft.filter((d) => d.id !== x.dataset.docdel); renderDocs(); persistDocs(); }
+});
+document.addEventListener("keydown", (e) => { if ((e.target.id === "docUrl" || e.target.id === "docTitle") && e.key === "Enter" && !e.isComposing) { e.preventDefault(); addDoc(); } });
 function row(t) {
   return `<div class="row ${t.status === "Done" ? "done" : ""}" data-id="${t.id}">
   <input type="checkbox" class="cb" data-chk="${t.id}" ${t.status === "Done" ? "checked" : ""} aria-label="Mark done">
-  <div style="min-width:0"><div class="title">${esc(t.title)}</div><div class="sub">${esc(t.area)}</div></div>
+  <div style="min-width:0"><div class="title">${esc(t.title)}</div><div class="sub">${esc(t.area)}${docChip(t, 1)}</div></div>
   <div class="meta">${dueChip(t)}<span class="status st-${t.status.replace(/ /g,"")}">${t.status}</span>${priTag(t)}${av(t.owner)}</div></div>`;
 }
 function renderList(list) {
@@ -53,7 +83,7 @@ function upNext() {
     .sort((x, y) => byDue(x, y) || PR[pri(x)] - PR[pri(y)]).slice(0, 5);
   $("#upnext").innerHTML = `<div class="uhead"><h2>Up next</h2><span class="ornament">A few things to look at first</span></div>` + (ts.map((t) =>
     `<div class="row" data-id="${t.id}"><input type="checkbox" class="cb" data-chk="${t.id}" aria-label="Mark done">
-    <div class="title">${esc(t.title)}</div><div class="meta">${dueChip(t) || '<span class="due">No date</span>'}${priTag(t)}${av(t.owner)}</div></div>`).join("")
+    <div style="min-width:0"><div class="title">${esc(t.title)}</div>${t.docs && t.docs.length ? `<div class="sub">${docChip(t)}</div>` : ""}</div><div class="meta">${dueChip(t) || '<span class="due">No date</span>'}${priTag(t)}${av(t.owner)}</div></div>`).join("")
     || `<div class="empty">All clear. Enjoy the quiet.</div>`);
 }
 function renderBoard(list) {
@@ -95,7 +125,7 @@ function render() {
   document.querySelectorAll("#tabs a").forEach((a) => { const on = a.dataset.tab === tab; a.classList.toggle("on", on); on ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"); });
   { const a = document.querySelector("#tabs a.on"), bar = $("#tabs"); if (a && bar.scrollWidth > bar.clientWidth) bar.scrollTo({ left: a.offsetLeft - (bar.clientWidth - a.offsetWidth) / 2, behavior: "auto" }); }
   $("#ownerChips").innerHTML = ["", ...OWNERS].map((o) => `<button class="chip ${o === ownerF ? "on" : ""}" data-owner="${o}">${o || "Everyone"}</button>`).join("");
-  renderList(list); upNext(); renderBoard(data.tasks); renderCal(); renderMeetings(); renderAsk(); renderActivity(); renderHours(); if ($("#modal").open) renderComments($("#form").dataset.id);
+  renderList(list); upNext(); renderBoard(data.tasks); renderCal(); renderMeetings(); renderAsk(); renderActivity(); renderHours(); if ($("#modal").open) { const id = $("#form").dataset.id, tt = id && data.tasks.find((x) => x.id === id); if (tt && !demo && JSON.stringify(tt.docs || []) !== JSON.stringify(docsDraft) && document.activeElement?.id !== "docUrl") { docsDraft = (tt.docs || []).slice(); renderDocs(); } renderComments(id); }
 }
 function readHash() {
   const p = location.hash.slice(1).toLowerCase().split(/[&?\/,-]+/);
@@ -106,12 +136,15 @@ function openModal(t) {
   const f = $("#form"); t = t || { status: "Open", owner: "Unassigned", priority: "Medium", area: "Magpy" };
   $("#mTitle").textContent = t.id ? "Edit task" : "New task"; f.dataset.id = t.id || "";
   for (const k of ["title", "status", "owner", "due", "priority", "area", "notes"]) f.elements[k].value = t[k] || "";
-  $("#del").style.display = t.id ? "" : "none"; renderComments(t.id || ""); $("#cmtIn").value = ""; $("#modal").showModal();
+  $("#del").style.display = t.id ? "" : "none"; renderComments(t.id || ""); $("#cmtIn").value = ""; docsDraft = (t.docs || []).slice(); $("#docUrl").value = ""; $("#docTitle").value = ""; renderDocs(); $("#modal").showModal();
 }
 const addTask = async (title, due, p) => { title = title.trim(); if (!title) return; await Store.saveTask({ title, status: "Open", owner: ownerF && ownerF !== "" ? ownerF : "Unassigned", due: due || "", priority: p || "Medium", area: "Magpy", notes: "" }); refresh(); };
 function applyDemo() {
   const T = data.tasks, off = (n) => { const d = new Date(today); d.setDate(d.getDate() + n); return iso(d); };
   if (T.length < 8) return;
+  const dd = (id, url, title) => ({ id, url, title, addedBy: "Ariel", addedAt: new Date().toISOString() });
+  T[1].docs = [dd("d1", "https://docs.google.com/document/d/abc/edit", "Natrion memo draft"), dd("d2", "https://docs.google.com/presentation/d/abc/edit", ""), dd("d3", "https://docs.google.com/spreadsheets/d/abc/edit", "Source list")];
+  T[0].docs = [dd("d4", "https://docs.google.com/spreadsheets/d/xyz/edit", "")];
   Object.assign(T[0], { owner: "Can", status: "In Progress", due: off(2) });
   Object.assign(T[1], { owner: "Ariel", status: "In Progress", due: off(0) });
   Object.assign(T[2], { status: "Review", owner: "Myles", due: off(-1), priority: "Urgent" });
@@ -255,7 +288,7 @@ async function init() {
     if (e.submitter?.value !== "save") return;
     const f = e.target, t = { id: f.dataset.id || undefined };
     for (const k of ["title", "status", "owner", "due", "priority", "area", "notes"]) t[k] = f.elements[k].value.trim();
-    t.area ||= "Magpy"; await Store.saveTask(t); refresh();
+    t.area ||= "Magpy"; t.docs = docsDraft.slice(); await Store.saveTask(t); refresh();
   });
   $("#del").onclick = async () => { const id = $("#form").dataset.id; if (id && confirm("Delete this task?")) { await Store.deleteTask(id); $("#modal").close(); refresh(); } };
   $("#hours").addEventListener("change", async (e) => { if (e.target.dataset.p) { await Store.setHours(e.target.dataset.p, WEEK, Math.max(0, +e.target.value || 0)); refresh(); } });
@@ -309,7 +342,7 @@ async function sendAsk() {
 })();
 
 // ---- Login
-let authRequired = false;
+
 const loginOpen = () => !$("#login").hidden;
 function showLogin() { if (loginOpen()) return; $("#login").hidden = false; document.body.classList.add("locked"); $("#loginErr").textContent = ""; setTimeout(() => $("#loginPw").focus(), 30); }
 function setupLogin() {

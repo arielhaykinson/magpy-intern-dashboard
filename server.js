@@ -99,6 +99,28 @@ function logTaskChange(by, cur, nt) {
   for (const k of ["status", "priority", "owner", "due"]) if ((cur[k] || "") !== (nt[k] || "")) log(by, "change", nt, `changed ${LBL[k]}: ${cur[k] || "none"} → ${nt[k] || "none"}`);
   if (cur.title !== nt.title) log(by, "change", nt, `renamed from “${cur.title}”`);
 }
+
+// ---- Task docs: [{id, url, title, addedBy, addedAt}], http(s) only, max 20 per task
+const MAX_DOCS = 20;
+function cleanDocs(input, prev, by) {
+  const old = new Map((Array.isArray(prev) ? prev : []).map((d) => [d.id, d])), seen = new Set(), out = [];
+  for (const d of Array.isArray(input) ? input : []) {
+    if (!d || typeof d !== "object" || typeof d.url !== "string") continue;
+    let u; try { u = new URL(d.url.trim()); } catch { continue; }
+    if (u.protocol !== "http:" && u.protocol !== "https:") continue;
+    let id = typeof d.id === "string" && /^[\w-]{1,40}$/.test(d.id) ? d.id : "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    if (seen.has(id)) continue; seen.add(id);
+    const o = old.get(id);
+    out.push(o ? { ...o, title: String(d.title ?? o.title ?? "").trim().slice(0, 120) } : { id, url: u.href.slice(0, 2000), title: String(d.title ?? "").trim().slice(0, 120), addedBy: String(d.addedBy || by || "").slice(0, 40), addedAt: new Date().toISOString() });
+    if (out.length >= MAX_DOCS) break;
+  }
+  return out;
+}
+const docLabel = (d) => { try { const u = new URL(d.url), p = u.pathname; return d.title || (u.hostname === "docs.google.com" ? (p.startsWith("/document") ? "Doc" : p.startsWith("/presentation") ? "Slides" : p.startsWith("/spreadsheets") ? "Sheet" : "Doc") : u.hostname.replace(/^www\./, "")); } catch { return d.title || "doc"; } };
+function logDocs(by, cur, nt) {
+  const had = new Set(((cur && cur.docs) || []).map((d) => d.id));
+  for (const d of nt.docs) if (!had.has(d.id)) log(by, "doc", nt, "attached a doc: " + docLabel(d));
+}
 const FIELDS = ["title", "status", "owner", "due", "priority", "area", "notes"];
 
 http.createServer(async (req, res) => {
@@ -132,7 +154,8 @@ http.createServer(async (req, res) => {
       const i = db.tasks.findIndex((x) => x.id === t.id), cur = db.tasks[i];
       if ((cur && cur.updatedAt > t.updatedAt) || (db.tombstones[t.id] || 0) > t.updatedAt) return send(res, 200, { applied: false, task: cur || null });
       const nt = { id: t.id, updatedAt: t.updatedAt }; for (const k of FIELDS) nt[k] = String(t[k] ?? ""); nt.priority = normPri(nt.priority);
-      logTaskChange(by, cur, nt); i >= 0 ? (db.tasks[i] = nt) : db.tasks.push(nt); delete db.tombstones[t.id];
+      nt.docs = cleanDocs(t.docs === undefined ? (cur && cur.docs) : t.docs, cur && cur.docs, by);
+      logTaskChange(by, cur, nt); logDocs(by, cur, nt); i >= 0 ? (db.tasks[i] = nt) : db.tasks.push(nt); delete db.tombstones[t.id];
       persist(); broadcast(by); return send(res, 200, { applied: true, task: nt });
     }
     if (p.startsWith("/api/task/") && req.method === "DELETE") {

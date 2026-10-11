@@ -234,3 +234,19 @@ body.locked .app{display:none}
 .atask{color:var(--mut);font-size:12.5px}
 .actlist .empty{padding:22px 0;color:var(--mut);text-align:center}
 @media(max-width:700px){.actlist{padding:4px 14px}.act small{display:none}}
+
+.docs{margin:6px 0 16px;padding-top:16px;border-top:1px solid var(--line)}
+.docs h3{font-family:var(--serif);font-size:16px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.docnew{display:flex;gap:6px;flex-wrap:wrap}
+a.btn{display:inline-block;background:#fff;border:1px solid #e6e0d5;border-radius:999px;padding:4px 12px;font-size:12.5px;color:var(--ink);text-decoration:none}
+a.btn:hover{border-color:#cfc8ba;background:#fcfbf8}
+.dochint{margin:8px 0 10px;color:var(--mut);font-size:12.5px}
+.docadd{display:flex;gap:8px}.docadd input{min-width:0}.docadd #docUrl{flex:2}.docadd #docTitle{flex:1}
+.doclist{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:2px}
+.doclist li{display:flex;align-items:center;gap:8px;padding:5px 0}
+.doclist a{flex:1;min-width:0;display:flex;align-items:center;gap:8px;color:var(--accd);text-decoration:none;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doclist a:hover{text-decoration:underline}
+.dk{flex:none;font-size:11px;background:var(--accbg);color:var(--accd);border-radius:999px;padding:1px 8px}
+.dx{border:0;background:none;color:var(--mut);font-size:12px;padding:2px 6px}.dx:hover{color:var(--terra);background:none}
+.docchip.inl{margin-left:8px}
+.docchip{display:inline-block;font-size:11.5px;color:var(--mut);background:#f3efe6;border-radius:999px;padding:0 8px}
