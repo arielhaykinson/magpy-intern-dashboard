@@ -5,6 +5,7 @@ const SCOLOR = { Open: "var(--s-open)", "In Progress": "var(--s-prog)", Review: 
 const I = (p, c = "ic") => `<svg class="${c}" viewBox="0 0 16 16" aria-hidden="true">${p}</svg>`;
 const ICONS = { caret: '<path d="M4.5 6.5 8 10l3.5-3.5"/>', prev: '<path d="M9.5 4 5.5 8l4 4"/>', next: '<path d="M6.5 4l4 4-4 4"/>', cal: '<rect x="2.5" y="3.5" width="11" height="10" rx="2"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/>', clock: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/>', inbox: '<path d="M2.5 9.5 4 4a1.5 1.5 0 0 1 1.4-1h5.2A1.5 1.5 0 0 1 12 4l1.5 5.5v2a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M2.5 9.5h3l.8 1.5h3.4l.8-1.5h3"/>', list: '<path d="M3 4.5h10M3 8h10M3 11.5h6"/>', board: '<rect x="2.5" y="3" width="4" height="10" rx="1.2"/><rect x="9.5" y="3" width="4" height="6" rx="1.2"/>' };
 const $ = (s) => document.querySelector(s);
+const FINE = matchMedia("(pointer:fine)").matches;
 let authRequired = false, data = { tasks: [], hours: {}, meetings: [], asks: [], comments: {}, activity: [] }, tab = "tasks", ownerF = "", selDay = "", demo = false;
 const closed = new Set(); const today = new Date(); const iso = (d) => d.toLocaleDateString("en-CA");
 const TODAY = iso(today); let cur = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -90,7 +91,7 @@ function renderBoard(list) {
   $("#board").innerHTML = STATUSES.map((s) => {
     const ts = list.filter((t) => t.status === s);
     return `<div class="col" data-status="${s}"><h2>${s}<span>${ts.length}</span></h2>${ts.map((t) =>
-      `<div class="kcard" draggable="true" data-id="${t.id}"><b>${esc(t.title)}</b><div class="meta"><span class="pri ${pri(t)}">${pri(t)}</span>${dueChip(t)}${av(t.owner)}</div></div>`).join("")}</div>`;
+      `<div class="kcard" draggable="${FINE}" data-id="${t.id}"><b>${esc(t.title)}</b><div class="meta"><span class="pri ${pri(t)}">${pri(t)}</span>${dueChip(t)}${av(t.owner)}</div><label class="mv">Move to<select data-mv="${t.id}" aria-label="Move ${esc(t.title)} to status">${STATUSES.map((x) => `<option${x === t.status ? " selected" : ""}>${x}</option>`).join("")}</select></label></div>`).join("")}</div>`;
   }).join("");
 }
 function renderCal() {
@@ -101,12 +102,12 @@ function renderCal() {
   for (let i = 0; i < 42; i++) {
     const d = new Date(start); d.setDate(start.getDate() + i); const k = iso(d), tk = by[k] || [], ms = mby[k] || [], ts = [...ms, ...tk];
     if (i >= 35 && d.getMonth() !== m) break;
-    cells += `<button class="cell ${d.getMonth() !== m ? "out" : ""} ${k === TODAY ? "today" : ""} ${k === selDay ? "sel" : ""}" data-day="${k}"><span class="n">${d.getDate()}</span><span class="evs">${ts.slice(0, 2).map((t) => t.start ? `<i class="ev mtg" title="Meeting">${hm(t.start)} ${esc(t.title)}</i>` : `<i class="ev ${t.status === "Done" ? "done" : pri(t)}">${esc(t.title)}</i>`).join("")}${ts.length > 2 ? `<i class="more">+${ts.length - 2} more</i>` : ""}</span></button>`;
+    cells += `<button class="cell ${d.getMonth() !== m ? "out" : ""} ${k === TODAY ? "today" : ""} ${k === selDay ? "sel" : ""}" data-day="${k}"><span class="n">${d.getDate()}</span>${ts.length ? `<span class="dots" aria-label="${ts.length} items">${"<b></b>".repeat(Math.min(3, ts.length))}</span>` : ""}<span class="evs">${ts.slice(0, 2).map((t) => t.start ? `<i class="ev mtg" title="Meeting">${hm(t.start)} ${esc(t.title)}</i>` : `<i class="ev ${t.status === "Done" ? "done" : pri(t)}">${esc(t.title)}</i>`).join("")}${ts.length > 2 ? `<i class="more">+${ts.length - 2} more</i>` : ""}</span></button>`;
   }
   $("#cal").innerHTML = `<div class="chead"><h3>${cur.toLocaleDateString("en-US", { month: "long", year: "numeric" })}</h3><div class="nav"><button data-nav="-1" aria-label="Previous month">←</button><button data-nav="0">Today</button><button data-nav="1" aria-label="Next month">→</button></div></div>
   <div class="cgrid">${["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => `<div class="dow">${d}</div>`).join("")}${cells}</div>`;
   const ts = selDay ? data.tasks.filter((t) => t.due === selDay) : [], dm = selDay ? liveMeetings().filter((m) => iso(new Date(m.start)) === selDay) : [];
-  $("#day").innerHTML = selDay ? `<h3>${pd(selDay).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</h3>
+  $("#day").innerHTML = selDay ? `<div class="phead"><h3>${pd(selDay).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</h3><button type="button" class="xbtn" data-dayclose aria-label="Close day panel">&times;</button></div>
    ${dm.map((m) => `<div class="drow mtgrow" data-mid="${m.id}"><span class="tm">${hm(m.start)}</span><span class="t">${esc(m.title)} <span class="mstat ms-${m.status.replace(/ /g, "")}">${m.status === "requested" ? "Requested" : "On calendar"}</span></span></div>`).join("")}${ts.map((t) => `<div class="drow ${t.status === "Done" ? "done" : ""}" data-id="${t.id}"><input type="checkbox" class="cb" data-chk="${t.id}" ${t.status === "Done" ? "checked" : ""}><span class="t">${esc(t.title)}</span>${av(t.owner)}</div>`).join("") || dm.length ? "" : `<div class="nothing">Nothing due this day. A nice open one.</div>`}
    <form class="dayadd" id="dayAdd" autocomplete="off"><input placeholder="Add task for this day…" id="dayTitle"><button class="primary sm">Add</button></form>`
    : `<div class="pick">Pick a day to see what is on it, or add something new.</div>`;
@@ -172,7 +173,7 @@ function greet() {
 function setupSync() {
   const top = document.querySelector(".top"), box = document.createElement("div");
   box.className = "sync"; box.style.cssText = "display:flex;gap:10px;align-items:center;font-size:12px;color:#6b6b60;margin-top:6px";
-  box.innerHTML = `<label>You are <select id="who" style="font:inherit"><option value="">choose…</option>${["Myles", "Ariel", "Can"].map((n) => `<option>${n}</option>`).join("")}</select></label><span id="syncState" aria-live="polite"></span>`;
+  box.innerHTML = `<label>You are <select id="who"><option value="">choose…</option>${["Myles", "Ariel", "Can"].map((n) => `<option>${n}</option>`).join("")}</select></label><span id="syncState" aria-live="polite"></span>`;
   top.appendChild(box); $("#who").value = Store.user();
   $("#who").onchange = () => { Store.setUser($("#who").value); greet(); };
   const paint = () => { const s = Store.status(); $("#syncState").textContent = s.demo ? "Demo (local only)" : !s.online ? "● Offline" : s.saving ? "Saving…" : "● Saved"; $("#syncState").style.color = !s.online && !s.demo ? "#b4533c" : ""; };
@@ -259,17 +260,29 @@ async function init() {
   const openMenu = (btn) => {
     closeMenu(); const t = byId(btn.dataset.pri); if (!t) return; btn.setAttribute("aria-expanded", "true");
     const m = document.createElement("div"); m.id = "pmenu"; m.setAttribute("role", "menu");
-    m.innerHTML = PRIS.map((p) => `<button type="button" role="menuitem" class="pm ${p === pri(t) ? "cur" : ""}" data-pset="${p}"><i class="pri ${p}">${p}</i></button>`).join("");
+    m.innerHTML = `<button type="button" class="pmx xbtn" data-pclose aria-label="Close priority menu">&times;</button>` + PRIS.map((p) => `<button type="button" role="menuitem" class="pm ${p === pri(t) ? "cur" : ""}" data-pset="${p}"><i class="pri ${p}">${p}</i></button>`).join("");
     document.body.appendChild(m); const r = btn.getBoundingClientRect();
     m.style.left = Math.max(8, Math.min(r.left + scrollX, innerWidth - m.offsetWidth - 8 + scrollX)) + "px"; m.style.top = r.bottom + scrollY + 6 + "px"; m.dataset.id = t.id; if (r.bottom + m.offsetHeight + 12 > innerHeight) m.style.top = r.top + scrollY - m.offsetHeight - 6 + "px"; (m.querySelector(".cur") || m.querySelector(".pm")).focus({ preventScroll: true });
   };
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#pmenu")) { const b = document.querySelector("[data-pri][aria-expanded]"); closeMenu(); b?.focus(); } });
   window.addEventListener("hashchange", () => { readHash(); render(); });
   $("#cancel").onclick = () => $("#modal").close();
+  $("#xClose").onclick = () => $("#modal").close();
+  const md = $("#modal"); let pushed = false;
+  md.addEventListener("click", (e) => { if (e.target === md) md.close(); });
+  new MutationObserver(() => { if (md.open) { document.body.classList.add("mopen"); if (!pushed) { history.pushState({ m: 1 }, ""); pushed = true; } } else { document.body.classList.remove("mopen"); if (pushed) { pushed = false; if (history.state && history.state.m) history.back(); } } }).observe(md, { attributes: true, attributeFilter: ["open"] });
+  window.addEventListener("popstate", () => { if (md.open) { pushed = false; md.close(); } });
+  document.addEventListener("change", async (e) => { const s = e.target.closest?.("[data-mv]"); if (!s) return; const t = byId(s.dataset.mv); if (t && t.status !== s.value) { t.status = s.value; if (!demo) await Store.saveTask(t); refresh(); } });
+  $("#askText").addEventListener("focus", () => setTimeout(() => $("#askForm").scrollIntoView({ block: "end", behavior: "smooth" }), 300));
+  if (window.visualViewport) visualViewport.addEventListener("resize", () => { const a = document.activeElement; if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) a.scrollIntoView({ block: "center" }); });
   $("#quick").onsubmit = (e) => { e.preventDefault(); const v = $("#qTitle").value; $("#qTitle").value = ""; addTask(v, "", $("#qPri").value); };
   const byId = (id) => data.tasks.find((t) => t.id === id);
   document.addEventListener("click", async (e) => {
     const g = e.target;
+    if (g.closest("[data-pclose]")) { const b = document.querySelector("[data-pri][aria-expanded]"); closeMenu(); b?.focus(); return; }
+    if (g.closest("[data-back]")) { location.hash = "#tasks"; return; }
+    if (g.closest("[data-dayclose]")) { selDay = ""; render(); return; }
+    if (g.closest("[data-mv]")) return;
     const ps = g.closest("[data-pset]");
     if (ps) { const id = $("#pmenu").dataset.id, t = byId(id); closeMenu(); if (t && t.priority !== ps.dataset.pset) { t.priority = ps.dataset.pset; if (demo) { render(); return; } await Store.saveTask(t); refresh(); } return; }
     const pb = g.closest("[data-pri]"); if (pb) { const was = pb.hasAttribute("aria-expanded"); closeMenu(); if (!was) openMenu(pb); return; }

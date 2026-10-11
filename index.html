@@ -1,5 +1,5 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Magpy Interns</title><link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png"><link rel="icon" type="image/png" sizes="64x64" href="favicon.png"><link rel="apple-touch-icon" href="apple-touch-icon.png"><link rel="stylesheet" href="style.css?v=17"></head><body>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Magpy Interns</title><link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png"><link rel="icon" type="image/png" sizes="64x64" href="favicon.png"><link rel="apple-touch-icon" href="apple-touch-icon.png"><link rel="stylesheet" href="style.css?v=18"></head><body>
 <div id="login" class="login" hidden><form id="loginForm" class="logincard" autocomplete="off"><h1><span class="mark">Magpy</span> <em>interns</em></h1><p>Enter the team password to continue.</p><input type="password" id="loginPw" placeholder="Password" aria-label="Password" autocomplete="current-password"><div id="loginErr" class="loginerr" role="alert"></div><button class="primary" type="submit">Sign in</button></form></div>
 <div class="app">
 <header class="top">
@@ -21,6 +21,7 @@
  <section id="pCalendar" class="pane" hidden><div id="cal"></div><div id="day"></div></section>
  <section id="pBoard" class="pane wide" hidden><div id="board"></div></section>
  <section id="pMeetings" class="pane" hidden>
+  <div class="phead"><h2>Meetings</h2><button type="button" class="xbtn" data-back aria-label="Close meetings and go back to tasks">&times;</button></div>
   <p class="mnote">New meetings are added to Google Calendar shortly after you request them.</p>
   <form id="mform" class="mcard" autocomplete="off">
    <h2 id="mfTitle">Schedule a meeting</h2>
@@ -43,12 +44,13 @@
   <div id="mlist"></div>
  </section>
  <section id="pAsk" class="pane" hidden>
+  <div class="phead"><h2>Ask the assistant</h2><button type="button" class="xbtn" data-back aria-label="Close Ask and go back to tasks">&times;</button></div>
   <p class="mnote">Requests are picked up by the assistant within a few minutes.</p>
   <div class="askcard">
    <div id="askThread" class="thread" aria-live="polite"></div>
    <div class="prompts" id="askChips"></div>
    <form id="askForm" class="askform" autocomplete="off">
-    <textarea id="askText" rows="1" placeholder="Ask the assistant for something…" aria-label="Request for the assistant" maxlength="2000"></textarea>
+    <textarea id="askText" rows="1" placeholder="Ask for something…" aria-label="Request for the assistant" maxlength="2000"></textarea>
     <button class="primary" type="submit">Send</button>
    </form>
   </div>
@@ -58,7 +60,7 @@
 </main>
 </div>
 <dialog id="modal"><form method="dialog" id="form">
- <h2 id="mTitle">New task</h2>
+ <div class="mhead"><h2 id="mTitle">New task</h2><button type="button" class="xbtn" id="xClose" aria-label="Close">&times;</button></div>
  <label>Title<input name="title" required></label>
  <div class="grid">
  <label>Status<select name="status"></select></label>
