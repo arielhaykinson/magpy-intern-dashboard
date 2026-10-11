@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: magpy-intern-dashboard
+    runtime: node
+    plan: starter
+    buildCommand: "echo no build"
+    startCommand: node server.js
+    envVars:
+      - key: DATA_DIR
+        value: /data
+    disk:
+      name: magpy-data
+      mountPath: /data
+      sizeGB: 1

@@ -1,0 +1,37 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Magpy Interns</title><link rel="stylesheet" href="style.css?v=7"></head><body>
+<div class="app">
+<header class="top">
+ <div class="brand"><h1><span class="mark">Magpy</span> <em>interns</em></h1><p id="greet" class="greet"></p></div>
+ <nav class="tabs" id="tabs" role="tablist"><a href="#tasks" data-tab="tasks">Tasks</a><a href="#calendar" data-tab="calendar">Calendar</a><a href="#board" data-tab="board">Board</a><a href="#hours" data-tab="hours">Hours</a></nav>
+</header>
+<hr class="rule">
+<main class="main">
+ <section id="pTasks" class="pane">
+  <form id="quick" class="quick" autocomplete="off">
+      <input id="qTitle" placeholder="Add a task…" aria-label="New task title">
+   <button class="primary sm" type="submit">Add</button>
+  </form>
+  <div class="filters"><div class="chips" id="ownerChips"></div><select id="fStatus" aria-label="Filter by status"></select></div>
+  <section id="upnext" class="upnext"></section>
+  <section id="list"></section>
+ </section>
+ <section id="pCalendar" class="pane" hidden><div id="cal"></div><div id="day"></div></section>
+ <section id="pBoard" class="pane wide" hidden><div id="board"></div></section>
+ <section id="pHours" class="pane narrow" hidden><div id="hours"></div></section>
+</main>
+</div>
+<dialog id="modal"><form method="dialog" id="form">
+ <h2 id="mTitle">New task</h2>
+ <label>Title<input name="title" required></label>
+ <div class="grid">
+ <label>Status<select name="status"></select></label>
+ <label>Owner<select name="owner"></select></label>
+ <label>Due date<input type="date" name="due"></label>
+ <label>Priority<select name="priority"><option>High</option><option>Medium</option><option>Low</option></select></label></div>
+ <label>Area<input name="area" value="Magpy"></label>
+ <label>Notes<textarea name="notes" rows="3"></textarea></label>
+ <div class="actions"><button type="button" id="del" class="danger">Delete</button><span></span>
+ <button type="button" id="cancel">Cancel</button><button class="primary" value="save">Save</button></div>
+</form></dialog>
+<script src="store.js"></script><script src="app.js"></script></body></html>

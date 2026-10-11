@@ -1,0 +1,32 @@
+<body><iframe id=f src="index.html#tasks-demo" style="width:1200px;height:900px"></iframe><pre id=o></pre><script>
+const log=[];const w=()=>new Promise(r=>setTimeout(r,150));
+const ok=(n,c)=>log.push((c?"PASS ":"FAIL ")+n);
+f.onload=async()=>{try{
+const d=f.contentDocument,W=f.contentWindow,q=s=>d.querySelector(s),qa=s=>[...d.querySelectorAll(s)];
+W.confirm=()=>true;
+await w();const n0=qa("#list .row").length;
+q("#qTitle").value="Test task XYZ";q("#quick").requestSubmit();await w();await w();
+ok("add",qa("#list .row").length===n0+1);
+let row=qa("#list .row").find(r=>r.textContent.includes("Test task XYZ"));
+q("[data-chk='"+row.dataset.id+"']") .click();await w();await w();
+row=qa("#list .row").find(r=>r.textContent.includes("Test task XYZ"));
+ok("check-off",row.classList.contains("done")&&row.closest(".group").dataset.g==="Done");
+row.querySelector(".title").click();await w();
+ok("modal opens",q("#modal").open);
+const f2=q("#form");f2.elements.title.value="Test task EDITED";f2.elements.due.value="2026-10-20";
+f2.requestSubmit(q("#form .primary"));await w();await w();await w();
+row=qa("#list .row").find(r=>r.textContent.includes("EDITED"));
+ok("edit",!!row);
+W.location.hash="#calendar-demo";await w();
+ok("calendar tab",!q("#pCalendar").hidden&&q("#pTasks").hidden);
+q("#cal").click();
+ok("cal shows task",q("#cal").textContent.includes("Test task EDITED"));
+W.location.hash="#board-demo";await w();ok("board tab",!q("#pBoard").hidden&&qa("#board .kcard").length>0);
+W.location.hash="#hours-demo";await w();ok("hours tab",!q("#pHours").hidden);
+W.location.hash="#tasks-demo";await w();
+row=qa("#list .row").find(r=>r.textContent.includes("EDITED"));
+row.querySelector(".title").click();await w();q("#del").click();await w();await w();await w();
+ok("delete",!qa("#list .row").some(r=>r.textContent.includes("EDITED")));
+}catch(e){log.push("ERR "+e)}
+o.textContent=log.join("\n");document.title="DONE"};
+</script>

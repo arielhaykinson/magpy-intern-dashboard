@@ -1,0 +1,5 @@
+data/
+shots/
+node_modules/
+*.log
+tunnel.sh
