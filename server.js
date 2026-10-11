@@ -6,8 +6,8 @@ fs.mkdirSync(BK, { recursive: true });
 const uid = () => "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const seedTasks = () => {
   const now = Date.now(), mk = (title, priority, i) => ({ id: uid(), title, status: "Open", owner: "Unassigned", due: "", priority, area: "Magpy", notes: "", updatedAt: now + i });
-  return ["Natrion source list|High", "Natrion memo onto the template|High", "Natrion sonar|High", "Natrion growth drivers|High",
-    "KairosLive facts file|High", "Robotaxi primer|High", "SAFE math explainer|Low", "Deal Evidence File blank template|Low"]
+  return ["Natrion source list|High", "Natrion memo onto the template|Medium", "Natrion sonar|Medium", "Natrion growth drivers|Medium",
+    "KairosLive facts file|Medium", "Robotaxi primer|Medium", "SAFE math explainer|Low", "Deal Evidence File blank template|Low"]
     .map((s, i) => mk(...s.split("|"), i));
 };
 let db, dirty = true;
@@ -16,8 +16,20 @@ if (!db || !Array.isArray(db.tasks)) {
   db = { seeded: true, tasks: seedTasks(), hours: {}, tombstones: {} };
   persist();
 }
+const PRIS = ["Urgent", "High", "Medium", "Low"];
+const normPri = (v) => PRIS.find((p) => p.toLowerCase() === String(v ?? "").trim().toLowerCase()) || "Low";
+let migrated = false;
+for (const t of db.tasks) { const n = normPri(t.priority); if (t.priority !== n) { t.priority = n; migrated = true; } }
+// One-time: starter tasks that are still unedited seed values get Medium (Natrion source list stays High).
+if (!db.priorityMigrated) {
+  const M = ["Natrion memo onto the template", "Natrion sonar", "Natrion growth drivers", "KairosLive facts file", "Robotaxi primer"];
+  const base = (db.tasks.find((t) => t.title === "Natrion source list") || {}).updatedAt;
+  for (const t of db.tasks) if (M.includes(t.title) && t.priority === "High" && t.status === "Open" && t.owner === "Unassigned" && !t.due && t.area === "Magpy" && !t.notes && base && Math.abs(t.updatedAt - base) < 50) { t.priority = "Medium"; t.updatedAt = Date.now(); }
+  db.priorityMigrated = true; migrated = true;
+}
 db.hours ||= {}; db.tombstones ||= {}; db.meetings ||= [];
 function persist() { const tmp = DB + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(db, null, 1)); fs.renameSync(tmp, DB); dirty = true; }
+if (migrated) persist();
 const view = () => ({ tasks: db.tasks, meetings: db.meetings, hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])) });
 
 // Backups: on start and every 10 min if changed; keep newest 48.
@@ -69,7 +81,7 @@ http.createServer(async (req, res) => {
       t.updatedAt = +t.updatedAt || Date.now();
       const i = db.tasks.findIndex((x) => x.id === t.id), cur = db.tasks[i];
       if ((cur && cur.updatedAt > t.updatedAt) || (db.tombstones[t.id] || 0) > t.updatedAt) return send(res, 200, { applied: false, task: cur || null });
-      const nt = { id: t.id, updatedAt: t.updatedAt }; for (const k of FIELDS) nt[k] = String(t[k] ?? "");
+      const nt = { id: t.id, updatedAt: t.updatedAt }; for (const k of FIELDS) nt[k] = String(t[k] ?? ""); nt.priority = normPri(nt.priority);
       i >= 0 ? (db.tasks[i] = nt) : db.tasks.push(nt); delete db.tombstones[t.id];
       persist(); broadcast(by); return send(res, 200, { applied: true, task: nt });
     }

@@ -9,9 +9,9 @@
     const mk = (title, priority) => ({ id: uid(), title, status: "Open", owner: "Unassigned", due: "", priority, area: "Magpy", notes: "" });
     return {
       tasks: [
-        mk("Natrion source list", "High"), mk("Natrion memo onto the template", "High"),
-        mk("Natrion sonar", "High"), mk("Natrion growth drivers", "High"),
-        mk("KairosLive facts file", "High"), mk("Robotaxi primer", "High"),
+        mk("Natrion source list", "High"), mk("Natrion memo onto the template", "Medium"),
+        mk("Natrion sonar", "Medium"), mk("Natrion growth drivers", "Medium"),
+        mk("KairosLive facts file", "Medium"), mk("Robotaxi primer", "Medium"),
         mk("SAFE math explainer", "Low"), mk("Deal Evidence File blank template", "Low"),
       ],
       hours: {},

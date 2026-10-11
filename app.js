@@ -16,12 +16,17 @@ const pd = (s) => new Date(s + "T00:00:00");
 const fmt = (s) => pd(s).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 const initials = (o) => (o === "Unassigned" ? "?" : o.slice(0, 2).toUpperCase());
 const av = (o) => `<span class="own"><i class="av av-${esc(o)}">${initials(o)}</i><span class="oname">${esc(o)}</span></span>`;
-const pri = (t) => t.priority || "Low";
+const PRIS = ["Urgent", "High", "Medium", "Low"], PR = { Urgent: 0, High: 1, Medium: 2, Low: 3 };
+const pri = (t) => (PR[t.priority] === undefined ? "Low" : t.priority);
+let sortBy = "due";
+const byDue = (x, y) => (x.due ? 0 : 1) - (y.due ? 0 : 1) || (x.due || "").localeCompare(y.due || "");
+const cmpTasks = (x, y) => sortBy === "priority" ? PR[pri(x)] - PR[pri(y)] || byDue(x, y) : byDue(x, y) || PR[pri(x)] - PR[pri(y)];
+const priTag = (t) => `<button type="button" class="pri ${pri(t)}" data-pri="${t.id}" aria-haspopup="menu" title="Change priority">${pri(t)}</button>`;
 
 async function refresh() { data = await Store.load(); if (demo) applyDemo(); render(); }
 function filtered() {
   const s = $("#fStatus").value;
-  return data.tasks.filter((t) => (!ownerF || t.owner === ownerF) && (!s || t.status === s));
+  return data.tasks.filter((t) => (!ownerF || t.owner === ownerF) && (!s || t.status === s) && (!$("#fPri").value || pri(t) === $("#fPri").value)).sort(cmpTasks);
 }
 function dueChip(t) {
   if (!t.due) return "";
@@ -34,7 +39,7 @@ function row(t) {
   return `<div class="row ${t.status === "Done" ? "done" : ""}" data-id="${t.id}">
   <input type="checkbox" class="cb" data-chk="${t.id}" ${t.status === "Done" ? "checked" : ""} aria-label="Mark done">
   <div style="min-width:0"><div class="title">${esc(t.title)}</div><div class="sub">${esc(t.area)}</div></div>
-  <div class="meta">${dueChip(t)}<span class="status st-${t.status.replace(/ /g,"")}">${t.status}</span><span class="pri ${pri(t)}">${pri(t)}</span>${av(t.owner)}</div></div>`;
+  <div class="meta">${dueChip(t)}<span class="status st-${t.status.replace(/ /g,"")}">${t.status}</span>${priTag(t)}${av(t.owner)}</div></div>`;
 }
 function renderList(list) {
   $("#list").innerHTML = STATUSES.map((s) => {
@@ -44,12 +49,11 @@ function renderList(list) {
   }).join("");
 }
 function upNext() {
-  const R = { High: 0, Medium: 1, Low: 2 };
   const ts = data.tasks.filter((t) => t.status !== "Done" && (!ownerF || t.owner === ownerF))
-    .sort((x, y) => (x.due ? 0 : 1) - (y.due ? 0 : 1) || (x.due || "").localeCompare(y.due || "") || R[pri(x)] - R[pri(y)]).slice(0, 5);
+    .sort((x, y) => byDue(x, y) || PR[pri(x)] - PR[pri(y)]).slice(0, 5);
   $("#upnext").innerHTML = `<div class="uhead"><h2>Up next</h2><span class="ornament">A few things to look at first</span></div>` + (ts.map((t) =>
     `<div class="row" data-id="${t.id}"><input type="checkbox" class="cb" data-chk="${t.id}" aria-label="Mark done">
-    <div class="title">${esc(t.title)}</div><div class="meta">${dueChip(t) || '<span class="due">No date</span>'}<span class="pri ${pri(t)}">${pri(t)}</span>${av(t.owner)}</div></div>`).join("")
+    <div class="title">${esc(t.title)}</div><div class="meta">${dueChip(t) || '<span class="due">No date</span>'}${priTag(t)}${av(t.owner)}</div></div>`).join("")
     || `<div class="empty">All clear. Enjoy the quiet.</div>`);
 }
 function renderBoard(list) {
@@ -97,18 +101,18 @@ function readHash() {
   if (p.includes("board")) tab = "board";
 }
 function openModal(t) {
-  const f = $("#form"); t = t || { status: "Open", owner: "Unassigned", priority: "Low", area: "Magpy" };
+  const f = $("#form"); t = t || { status: "Open", owner: "Unassigned", priority: "Medium", area: "Magpy" };
   $("#mTitle").textContent = t.id ? "Edit task" : "New task"; f.dataset.id = t.id || "";
   for (const k of ["title", "status", "owner", "due", "priority", "area", "notes"]) f.elements[k].value = t[k] || "";
   $("#del").style.display = t.id ? "" : "none"; $("#modal").showModal();
 }
-const addTask = async (title, due) => { title = title.trim(); if (!title) return; await Store.saveTask({ title, status: "Open", owner: ownerF && ownerF !== "" ? ownerF : "Unassigned", due: due || "", priority: "Low", area: "Magpy", notes: "" }); refresh(); };
+const addTask = async (title, due, p) => { title = title.trim(); if (!title) return; await Store.saveTask({ title, status: "Open", owner: ownerF && ownerF !== "" ? ownerF : "Unassigned", due: due || "", priority: p || "Medium", area: "Magpy", notes: "" }); refresh(); };
 function applyDemo() {
   const T = data.tasks, off = (n) => { const d = new Date(today); d.setDate(d.getDate() + n); return iso(d); };
   if (T.length < 8) return;
   Object.assign(T[0], { owner: "Can", status: "In Progress", due: off(2) });
   Object.assign(T[1], { owner: "Ariel", status: "In Progress", due: off(0) });
-  Object.assign(T[2], { status: "Review", owner: "Myles", due: off(-1) });
+  Object.assign(T[2], { status: "Review", owner: "Myles", due: off(-1), priority: "Urgent" });
   Object.assign(T[3], { owner: "Ariel", due: off(5) });
   Object.assign(T[4], { owner: "Can", due: off(5) });
   Object.assign(T[5], { owner: "Myles", due: off(9) });
@@ -202,13 +206,28 @@ async function init() {
   greet();
   $("#fStatus").innerHTML = opts(STATUSES, "All statuses");
   $("#form").elements.status.innerHTML = opts(STATUSES); $("#form").elements.owner.innerHTML = opts(OWNERS);
-  $("#fStatus").onchange = render;
+  $("#fPri").innerHTML = opts(PRIS, "All priorities"); $("#qPri").innerHTML = opts(PRIS); $("#qPri").value = "Medium";
+  $("#form").elements.priority.innerHTML = opts(PRIS);
+  $("#fStatus").onchange = render; $("#fPri").onchange = render; $("#sortBy").onchange = (e) => { sortBy = e.target.value; render(); };
+  const closeMenu = () => { $("#pmenu")?.remove(); document.querySelector("[data-pri][aria-expanded]")?.removeAttribute("aria-expanded"); };
+  const openMenu = (btn) => {
+    closeMenu(); const t = byId(btn.dataset.pri); if (!t) return; btn.setAttribute("aria-expanded", "true");
+    const m = document.createElement("div"); m.id = "pmenu"; m.setAttribute("role", "menu");
+    m.innerHTML = PRIS.map((p) => `<button type="button" role="menuitem" class="pm ${p === pri(t) ? "cur" : ""}" data-pset="${p}"><i class="pri ${p}">${p}</i></button>`).join("");
+    document.body.appendChild(m); const r = btn.getBoundingClientRect();
+    m.style.left = Math.max(8, Math.min(r.left + scrollX, innerWidth - m.offsetWidth - 8 + scrollX)) + "px"; m.style.top = r.bottom + scrollY + 6 + "px"; m.dataset.id = t.id; if (r.bottom + m.offsetHeight + 12 > innerHeight) m.style.top = r.top + scrollY - m.offsetHeight - 6 + "px"; (m.querySelector(".cur") || m.querySelector(".pm")).focus({ preventScroll: true });
+  };
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#pmenu")) { const b = document.querySelector("[data-pri][aria-expanded]"); closeMenu(); b?.focus(); } });
   window.addEventListener("hashchange", () => { readHash(); render(); });
   $("#cancel").onclick = () => $("#modal").close();
-  $("#quick").onsubmit = (e) => { e.preventDefault(); const v = $("#qTitle").value; $("#qTitle").value = ""; addTask(v, ""); };
+  $("#quick").onsubmit = (e) => { e.preventDefault(); const v = $("#qTitle").value; $("#qTitle").value = ""; addTask(v, "", $("#qPri").value); };
   const byId = (id) => data.tasks.find((t) => t.id === id);
   document.addEventListener("click", async (e) => {
     const g = e.target;
+    const ps = g.closest("[data-pset]");
+    if (ps) { const id = $("#pmenu").dataset.id, t = byId(id); closeMenu(); if (t && t.priority !== ps.dataset.pset) { t.priority = ps.dataset.pset; if (demo) { render(); return; } await Store.saveTask(t); refresh(); } return; }
+    const pb = g.closest("[data-pri]"); if (pb) { const was = pb.hasAttribute("aria-expanded"); closeMenu(); if (!was) openMenu(pb); return; }
+    closeMenu();
     const chk = g.closest("[data-chk]");
     if (chk) { const t = byId(chk.dataset.chk); t.status = chk.checked ? "Done" : "Open"; if (demo) { render(); return; } await Store.saveTask(t); refresh(); return; }
     const oc = g.closest("[data-owner]"); if (oc) { ownerF = oc.dataset.owner; render(); return; }
@@ -239,5 +258,6 @@ async function init() {
   if (demo && tab === "calendar") selDay = TODAY;
   await refresh();
   if (/modal/.test(location.hash)) openModal(data.tasks[1]);
+  if (/pmenu/.test(location.hash)) document.querySelectorAll("#upnext [data-pri]")[1]?.click();
 }
 init();
