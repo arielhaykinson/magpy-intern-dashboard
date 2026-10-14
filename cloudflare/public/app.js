@@ -36,7 +36,6 @@ function dueChip(t) {
   const lbl = diff === 0 ? "Today" : diff === 1 ? "Tomorrow" : fmt(t.due);
   return `<span class="due ${cls}">${done ? "" : diff < 0 ? "Overdue · " : ""}${lbl}</span>`;
 }
-// ---- Task docs
 const DOC_MAX = 20; let docsDraft = [];
 const docKind = (u) => { try { const x = new URL(u), p = x.pathname; if (x.hostname === "docs.google.com") return p.startsWith("/presentation") ? "Slides" : p.startsWith("/spreadsheets") ? "Sheet" : "Doc"; return x.hostname.replace(/^www\./, ""); } catch { return "Link"; } };
 const docName = (d) => d.title || docKind(d.url);
@@ -187,7 +186,6 @@ function setupSync() {
   });
 }
 
-// ---- meetings
 const PEOPLE = ["Myles", "Ariel", "Can"];
 const liveMeetings = () => (data.meetings || []).filter((m) => m.status !== "cancelled");
 const hm = (s) => new Date(s).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }).replace(":00", "").replace(" ", "").toLowerCase();
@@ -322,7 +320,6 @@ async function init() {
 }
 init();
 
-// ---- Ask tab ----
 const PROMPTS = ["Move the Natrion memo to Review", "Schedule a meeting Tuesday at 2", "What's due this week?", "Add a task: Robotaxi primer outline"];
 const esc2 = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const askTime = (iso) => { const d = new Date(iso), t = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }); return d.toDateString() === new Date().toDateString() ? t : d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + ", " + t; };
@@ -354,7 +351,6 @@ async function sendAsk() {
   go();
 })();
 
-// ---- Login
 
 const loginOpen = () => !$("#login").hidden;
 function showLogin() { if (loginOpen()) return; $("#login").hidden = false; document.body.classList.add("locked"); $("#loginErr").textContent = ""; setTimeout(() => $("#loginPw").focus(), 30); }
@@ -370,7 +366,6 @@ function setupLogin() {
   };
 }
 
-// ---- Comments & activity
 const when = (iso) => { const d = new Date(iso), t = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }); return d.toDateString() === new Date().toDateString() ? "Today, " + t : d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + ", " + t; };
 let cmtSig = "";
 function renderComments(id) {

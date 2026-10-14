@@ -1,4 +1,3 @@
-// Magpy dashboard server: static files + JSON API + SSE. No dependencies (Node 18+).
 const http = require("http"), fs = require("fs"), path = require("path"), crypto = require("crypto");
 const PORT = +process.env.PORT || 8765, ROOT = __dirname;
 const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, "data"), DB = path.join(DATA_DIR, "db.json"), BK = path.join(DATA_DIR, "backups");
@@ -32,7 +31,6 @@ function persist() { const tmp = DB + ".tmp"; fs.writeFileSync(tmp, JSON.stringi
 if (migrated) persist();
 const view = () => ({ tasks: db.tasks, meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])) });
 
-// Backups: on start and every 10 min if changed; keep newest 48.
 function backup() {
   if (!dirty) return; dirty = false;
   const n = "db-" + new Date().toISOString().replace(/[:.]/g, "-") + ".json";
@@ -48,7 +46,6 @@ const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".
 const body = (req) => new Promise((ok, no) => { let b = ""; req.on("data", (c) => { b += c; if (b.length > 1e6) { no(new Error("big")); req.destroy(); } }); req.on("end", () => { try { ok(JSON.parse(b || "{}")); } catch (e) { no(e); } }); });
 const send = (res, code, obj) => { res.writeHead(code, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify(obj)); };
 
-// Meetings. Stored only; syncing to Google Calendar is done by an external helper via /api/meetings/pending + /synced.
 const MSTAT = ["requested", "on calendar", "cancelled"], RMIN = [0, 10, 60, 1440];
 const mid = () => "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const isoOk = (s) => typeof s === "string" && !isNaN(Date.parse(s));
@@ -68,7 +65,6 @@ function cleanMeeting(m, cur, by) {
 const touch = (m) => { m.updatedAt = Date.now(); return m; };
 const aid = () => "a" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
-// ---- Auth: optional shared password (APP_PASSWORD). Unset = login disabled.
 const APP_PASSWORD = process.env.APP_PASSWORD || "";
 const SECRET = process.env.SESSION_SECRET || (APP_PASSWORD ? crypto.createHash("sha256").update("magpy-session|" + APP_PASSWORD).digest("hex") : "");
 const SESSION_MS = 30 * 24 * 3600 * 1000, COOKIE = "magpy_session";
@@ -82,12 +78,11 @@ function hasSession(req) {
 }
 const isHttps = (req) => String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https";
 const cookie = (req, val, maxAge) => `${COOKIE}=${val}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${isHttps(req) ? "; Secure" : ""}`;
-const fails = new Map(); // ip -> { n, first }
+const fails = new Map();
 const FAIL_MAX = 5, FAIL_WIN = 10 * 60 * 1000;
 const ipOf = (req) => String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
 setInterval(() => { const t = Date.now(); for (const [k, v] of fails) if (t - v.first > FAIL_WIN) fails.delete(k); }, 60000).unref();
 
-// ---- Activity log + comments
 const actId = () => "x" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 function log(by, kind, task, text) {
   db.activity.push({ id: actId(), at: new Date().toISOString(), who: String(by || "").slice(0, 40), kind, taskId: task ? task.id : "", title: task ? task.title : "", text: String(text || "").slice(0, 200) });
@@ -100,7 +95,6 @@ function logTaskChange(by, cur, nt) {
   if (cur.title !== nt.title) log(by, "change", nt, `renamed from “${cur.title}”`);
 }
 
-// ---- Task docs: [{id, url, title, addedBy, addedAt}], http(s) only, max 20 per task
 const MAX_DOCS = 20;
 function cleanDocs(input, prev, by) {
   const old = new Map((Array.isArray(prev) ? prev : []).map((d) => [d.id, d])), seen = new Set(), out = [];
@@ -228,7 +222,6 @@ http.createServer(async (req, res) => {
       db = { seeded: true, tasks: seedTasks(), hours: {}, tombstones: {}, meetings: [], asks: db.asks, comments: {}, activity: [] }; persist(); broadcast(by); return send(res, 200, { ok: true });
     }
     if (p.startsWith("/api/")) return send(res, 404, { error: "not found" });
-    // static
     let f = path.normalize(path.join(ROOT, p === "/" ? "index.html" : decodeURIComponent(p)));
     const rel = path.relative(ROOT, f);
     if (rel.startsWith("..") || rel.startsWith("data") || rel.startsWith("node_modules") || rel === "server.js" || rel.startsWith(".")) { res.writeHead(404); return res.end("not found"); }

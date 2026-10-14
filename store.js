@@ -1,6 +1,3 @@
-// Data layer. Server mode (default) talks to /api with SSE sync; "#demo" in the URL uses localStorage only.
-// Contract: all methods async. load() -> {tasks, hours, meetings}; saveTask(task); deleteTask(id); setHours(person, weekStart, hours); reset();
-// Extras: subscribe(fn) -> fn({type:"change"|"status", online, saving}); user get/set.
 (function () {
   const KEY = "magpy-dashboard-v1", UKEY = "magpy-user";
   const uid = () => "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);

@@ -1,4 +1,3 @@
-// Magpy dashboard API for Vercel Functions. Port of ../server.js with a revisioned KV store.
 const crypto = require("crypto");
 const { getStore } = require("./kv");
 
@@ -19,7 +18,6 @@ function normalize(db) {
 }
 const view = (db, rev) => ({ rev, tasks: db.tasks, meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])) });
 
-// ---- Store access: read (seeding if empty) and mutate with optimistic concurrency.
 async function readState() {
   const s = getStore();
   for (let i = 0; i < 6; i++) {
@@ -29,7 +27,6 @@ async function readState() {
   }
   throw new Error("could not initialise store");
 }
-// fn(db) -> { code, body, write } ; when write is falsy nothing is stored. Retries on revision conflict.
 async function mutate(fn) {
   const s = getStore();
   for (let i = 0; i < 12; i++) {
@@ -42,7 +39,6 @@ async function mutate(fn) {
   return { code: 503, body: { error: "busy, try again" } };
 }
 
-// ---- helpers (same as server.js)
 const MSTAT = ["requested", "on calendar", "cancelled"], RMIN = [0, 10, 60, 1440];
 const mid = () => "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const aid = () => "a" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -94,7 +90,6 @@ function logDocs(db, by, cur, nt) {
 }
 const FIELDS = ["title", "status", "owner", "due", "priority", "area", "notes"];
 
-// ---- Auth (read env per request so it can change without a redeploy of code)
 const cfg = () => {
   const pw = process.env.APP_PASSWORD || "";
   return { pw, secret: process.env.SESSION_SECRET || (pw ? crypto.createHash("sha256").update("magpy-session|" + pw).digest("hex") : "") };

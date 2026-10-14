@@ -1,4 +1,3 @@
-// Magpy dashboard on Cloudflare Workers: static assets + /api/* routed to one SQLite-backed Durable Object.
 import { DurableObject } from "cloudflare:workers";
 
 export default {
@@ -31,7 +30,6 @@ const actId = () => "x" + Date.now().toString(36) + Math.random().toString(36).s
 const isoOk = (s) => typeof s === "string" && !isNaN(Date.parse(s));
 const touch = (m) => { m.updatedAt = Date.now(); return m; };
 
-// ---- Task docs: [{id, url, title, addedBy, addedAt}], http(s) only, max 20 per task
 const MAX_DOCS = 20;
 function cleanDocs(input, prev, by) {
   const old = new Map((Array.isArray(prev) ? prev : []).map((d) => [d.id, d])), seen = new Set(), out = [];
@@ -70,7 +68,6 @@ function cleanMeeting(m, cur, by) {
   return { m: o };
 }
 
-// ---- Web Crypto helpers
 const b64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 async function sha256(s) { return new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(String(s)))); }
 async function safeEq(a, b) { const x = await sha256(a), y = await sha256(b); let d = 0; for (let i = 0; i < x.length; i++) d |= x[i] ^ y[i]; return d === 0; }
@@ -85,7 +82,6 @@ export class Dashboard extends DurableObject {
     this.clients = new Set(); this.fails = new Map(); this.dirty = new Set(); this.ready = null; this.timer = null;
   }
 
-  // ---- storage: whole state lives in memory, persisted per-section in DO (SQLite) key-value storage.
   async load() {
     const s = this.ctx.storage, g = async (k, d) => (await s.get(k)) ?? d;
     const db = { tasks: await g("tasks", null), hours: await g("hours", {}), tombstones: await g("tombstones", {}), meetings: await g("meetings", []), asks: await g("asks", []), activity: await g("activity", []), comments: {} };
@@ -131,7 +127,6 @@ export class Dashboard extends DurableObject {
     return new Response(readable, { headers: { "content-type": "text/event-stream", "cache-control": "no-store", "x-accel-buffering": "no" } });
   }
 
-  // ---- auth
   get password() { return this._pw || ""; }
   secretP() { return this._ss || (this.password ? "magpy-session|" + this.password : ""); }
   async makeSession() { const exp = String(Date.now() + SESSION_MS); return exp + "." + (await hmac(this.secretP(), "v1." + exp)); }

@@ -17,4 +17,3 @@ class_name = "Dashboard"
 tag = "v1"
 new_sqlite_classes = ["Dashboard"]
 
-# Secrets (not in this file): APP_PASSWORD, SESSION_SECRET  ->  wrangler secret put <NAME>

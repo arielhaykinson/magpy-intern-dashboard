@@ -1,4 +1,3 @@
-// Local stand-in for `vercel dev`: serves public/ and mounts api/[...path].js on one http server.
 const http = require("http"), fs = require("fs"), path = require("path");
 const PUB = path.join(__dirname, "..", "public"), api = require("../api/[...path].js");
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2", ".ttf": "font/ttf", ".png": "image/png" };

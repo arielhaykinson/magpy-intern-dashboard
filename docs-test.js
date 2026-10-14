@@ -1,4 +1,3 @@
-// Docs API test. Usage: BASE=http://127.0.0.1:PORT node docs-test.js  (works against both server.js and the Worker)
 const BASE = process.env.BASE || "http://127.0.0.1:8765", assert = require("assert");
 const call = async (m, p, b, h = {}) => { const r = await fetch(BASE + p, { method: m, headers: { "content-type": "application/json", ...h }, body: b ? JSON.stringify(b) : undefined }); return { s: r.status, j: await r.json().catch(() => null) }; };
 (async () => {

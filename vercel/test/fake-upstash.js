@@ -1,4 +1,3 @@
-// Minimal fake of Upstash REST (MGET / GET / SET / EVAL of our CAS script) for adapter testing.
 const http = require("http");
 function create() {
   const kv = new Map(); let calls = 0;
