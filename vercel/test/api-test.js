@@ -1,4 +1,3 @@
-// API tests against the harness with (a) file store and (b) fake Upstash. Run: node test/api-test.js
 const assert = require("assert"), fs = require("fs"), os = require("os"), path = require("path");
 async function suite(label, setup) {
   const cleanup = await setup();
@@ -8,22 +7,16 @@ async function suite(label, setup) {
   let d = (await call("GET", "/api/data")).j;
   assert.equal(d.tasks.length, 8, "seeded 8"); assert.equal(d.tasks[0].priority, "High"); assert(d.rev >= 1);
   assert.deepEqual((await call("GET", "/api/data?since=" + d.rev)).j, { rev: d.rev, unchanged: true });
-  // priorities
   for (const [pr, want] of [["urgent", "Urgent"], ["HIGH", "High"], ["Medium", "Medium"], ["low", "Low"], ["bogus", "Low"]]) {
     const r = await call("PUT", "/api/task", { id: "p-" + pr, title: "t", priority: pr }); assert.equal(r.j.task.priority, want);
   }
-  // docs
   const t = (await call("PUT", "/api/task", { id: "tdoc", title: "Doc task", docs: [{ url: "https://docs.google.com/document/d/1/edit" }, { url: "javascript:alert(1)" }, { url: "nope" }] })).j.task;
   assert.equal(t.docs.length, 1); assert.equal(t.docs[0].addedBy, "Ariel");
   const kept = (await call("PUT", "/api/task", { id: "tdoc", title: "Doc task", updatedAt: Date.now() + 5 })).j.task; assert.equal(kept.docs.length, 1, "docs kept when omitted");
-  // LWW
   assert.equal((await call("PUT", "/api/task", { id: "tdoc", title: "old", updatedAt: 1 })).j.applied, false);
-  // comments
   const c = await call("POST", "/api/task/tdoc/comments", { text: "hello", author: "Can" }); assert.equal(c.s, 201); assert.equal(c.j.comment.author, "Can");
   assert.equal((await call("POST", "/api/task/nope/comments", { text: "x" })).s, 404); assert.equal((await call("POST", "/api/task/tdoc/comments", { text: " " })).s, 400);
-  // hours
   assert.equal((await call("PUT", "/api/hours", { key: "Can|2026-10-05", value: 7.5 })).j.applied, true); assert.equal((await call("PUT", "/api/hours", { value: "x" })).s, 400);
-  // meetings
   const mt = await call("POST", "/api/meetings", { title: "Sync", start: "2026-10-12T15:00:00Z", end: "2026-10-12T15:30:00Z", attendees: ["a@b.c"], meet: true, reminderMinutes: 10 }); assert.equal(mt.s, 201);
   const mid = mt.j.meeting.id; assert.equal((await call("POST", "/api/meetings", { title: "", start: "x" })).s, 400);
   assert.equal((await call("GET", "/api/meetings/pending")).j.meetings.length, 1);
@@ -32,23 +25,17 @@ async function suite(label, setup) {
   assert.equal((await call("DELETE", "/api/meetings/" + mid)).j.meeting.status, "cancelled");
   assert.equal((await call("GET", "/api/meetings/pending?include=cancelled")).j.meetings.length, 1);
   assert.equal((await call("DELETE", `/api/meetings/${mid}?hard=1`)).j.meeting, null); assert.equal((await call("GET", "/api/meetings/" + mid)).s, 404);
-  // asks
   const a = (await call("POST", "/api/asks", { text: "Need X" })).j.ask; assert.equal(a.status, "new");
   assert.equal((await call("GET", "/api/asks/pending")).j.asks.length, 1);
   assert.equal((await call("POST", `/api/asks/${a.id}/reply`, { reply: "done" })).j.ask.status, "handled"); assert.equal((await call("GET", "/api/asks/pending")).j.asks.length, 0);
-  // activity + delete + tombstone
   d = (await call("GET", "/api/data")).j; assert(d.activity.some((x) => x.kind === "doc") && d.activity.some((x) => x.kind === "comment") && d.activity.some((x) => x.kind === "meeting"));
   assert.equal(d.hours["Can|2026-10-05"], 7.5);
   assert.equal((await call("DELETE", "/api/task/tdoc?updatedAt=" + (Date.now() + 100))).j.applied, true);
   assert.equal((await call("PUT", "/api/task", { id: "tdoc", title: "zombie", updatedAt: 5 })).j.applied, false);
-  // concurrency: 30 parallel writes from "3 people" must all land
   await Promise.all(Array.from({ length: 30 }, (_, i) => call("PUT", "/api/task", { id: "c" + i, title: "conc " + i }, { "x-user": ["Myles", "Ariel", "Can"][i % 3] })));
   d = (await call("GET", "/api/data")).j; assert.equal(d.tasks.filter((x) => x.id.startsWith("c")).length, 30, "no lost updates");
-  // events + 404
   assert.equal((await call("GET", "/api/events")).s, 410); assert.equal((await call("GET", "/api/zzz")).s, 404);
-  // reset keeps asks
   assert.equal((await call("POST", "/api/reset")).j.ok, true); d = (await call("GET", "/api/data")).j; assert.equal(d.tasks.length, 8); assert.equal(d.asks.length, 1); assert.equal(d.meetings.length, 0);
-  // login on/off
   assert.deepEqual((await call("GET", "/api/session")).j, { required: false, ok: true });
   process.env.APP_PASSWORD = "pw-test"; process.env.SESSION_SECRET = "s3cret";
   assert.deepEqual((await call("GET", "/api/session")).j, { required: true, ok: false });

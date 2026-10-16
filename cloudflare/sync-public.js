@@ -1,4 +1,3 @@
-// Copies the shared frontend (one level up) into ./public, the Workers Static Assets directory.
 const fs = require("fs"), path = require("path");
 const src = path.join(__dirname, ".."), dst = path.join(__dirname, "public");
 fs.rmSync(dst, { recursive: true, force: true }); fs.mkdirSync(path.join(dst, "fonts"), { recursive: true });

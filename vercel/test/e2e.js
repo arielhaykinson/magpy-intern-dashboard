@@ -1,4 +1,3 @@
-// Two headless clients against the harness (file store). Needs puppeteer-core + google-chrome.
 const puppeteer = require(process.env.PPTR || "/tmp/pt2/node_modules/puppeteer-core"), fs = require("fs"), os = require("os"), path = require("path");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "magpy-e2e-"));
@@ -14,38 +13,30 @@ const start = () => new Promise((r) => { for (const k of Object.keys(require.cac
   ok("8 starter tasks", (await A.$$("#list .row")).length === 8);
   await A.type("#qTitle", "E2E from Ariel"); await A.click("#quick button");
   const dt = await waitFor(C, "E2E from Ariel"); ok("add syncs to other client (" + dt + "ms, polling)", dt >= 0 && dt < 4500);
-  // C opens modal and types; A edits another task; modal must survive
   await click(C, "E2E from Ariel"); await C.type("#form [name=notes]", "typing in progress");
   await click(A, "Natrion sonar"); await A.$eval("#form [name=title]", (e) => (e.value = "Natrion sonar v2")); await A.select("#form [name=priority]", "Urgent").catch(() => {}); await A.click("#form button[value=save]");
   const dt2 = await waitFor(C, "Natrion sonar v2"); ok("edit syncs (" + dt2 + "ms)", dt2 >= 0 && dt2 < 4500);
   ok("open modal survived remote re-render", await C.evaluate(() => document.querySelector("#modal").open && document.querySelector("#form [name=notes]").value === "typing in progress"));
-  // priority urgent persisted via API
   const data = await (await fetch("http://localhost:3111/api/data")).json();
   ok("priority Urgent saved", data.tasks.find((t) => t.title === "Natrion sonar v2").priority === "Urgent");
-  // docs: C adds a doc link in its open modal and saves
   await C.type("#docUrl", "https://docs.google.com/document/d/abc/edit"); await C.click("#docAdd"); await C.click("#form button[value=save]");
   await sleep(3500); const dd = (await (await fetch("http://localhost:3111/api/data")).json()).tasks.find((t) => t.title === "E2E from Ariel");
   ok("doc saved and chip shown on A", dd.docs.length === 1 && await A.evaluate(() => document.querySelectorAll("#list .row a[href*='docs.google.com'], #list .row .doc, #list .row [class*=doc]").length > 0));
-  // hours
   await A.evaluate(() => { location.hash = "#hours"; }); await A.waitForSelector("#hours input");
   await A.$eval("#hours input[data-p=Can]", (e) => { e.value = "6.5"; e.dispatchEvent(new Event("change", { bubbles: true })); });
   await C.evaluate(() => { location.hash = "#hours"; }); await sleep(3500);
   ok("hours sync", await C.$eval("#hours input[data-p=Can]", (e) => e.value === "6.5"));
-  // meetings
   await A.evaluate(() => { location.hash = "#meetings"; }); await C.evaluate(() => { location.hash = "#meetings"; }); await A.waitForSelector("#mform");
   await A.type("#mform [name=title]", "E2E meeting"); await A.$eval("#mform [name=date]", (e) => (e.value = "2030-01-15")); await A.click("#mWho input[value=Can]"); await A.click("#mSave");
   ok("meeting syncs + Requested", (await waitFor(C, "E2E meeting")) >= 0 && await has(C, "Requested"));
-  // ask + comment
   await A.evaluate(() => { location.hash = "#tasks"; }); await sleep(300);
   await click(A, "E2E from Ariel"); await A.type("#cmtIn", "first comment"); await A.evaluate(() => document.querySelector("#cmtIn").closest("form, div").querySelector("button")?.click());
   await sleep(500); ok("comment saved", (await (await fetch("http://localhost:3111/api/data")).json()).comments && Object.values((await (await fetch("http://localhost:3111/api/data")).json()).comments).flat().some((c) => c.text === "first comment"));
   await A.click("#cancel");
-  // persistence across restart
   srv.close(); await new Promise((r) => setTimeout(r, 200)); srv = await start();
   await A.reload(); await A.waitForSelector("#list .row"); ok("persistence after restart", (await has(A, "E2E from Ariel")) && await has(A, "Natrion sonar v2"));
   await sleep(300); await A.evaluate(() => { location.hash = "#tasks"; });
   await A.screenshot({ path: path.join(__dirname, "..", "shots", "vercel-tasks.png") });
-  // login on: new context must see login screen
   srv.close(); process.env.APP_PASSWORD = "e2e-pass"; srv = await start();
   const L = await (await b.createBrowserContext()).newPage(); await L.setViewport({ width: 1280, height: 700, deviceScaleFactor: 2 }); await L.goto(U); await sleep(1500);
   ok("login screen shown when APP_PASSWORD set", await L.evaluate(() => !document.querySelector("#login").hidden));

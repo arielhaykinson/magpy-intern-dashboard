@@ -4,7 +4,6 @@
 const fs = require("fs"), path = require("path");
 
 const KEY = process.env.MAGPY_KEY || "magpy:state", REVKEY = KEY + ":rev";
-// Atomic compare-and-set: only writes if the stored revision equals the expected one.
 const LUA = "local c=tonumber(redis.call('GET',KEYS[2]) or '0'); if c ~= tonumber(ARGV[1]) then return 0 end; redis.call('SET',KEYS[1],ARGV[2]); redis.call('SET',KEYS[2],tostring(c+1)); return 1";
 
 function upstash(url, token) {
