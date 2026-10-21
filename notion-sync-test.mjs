@@ -91,6 +91,9 @@ for (const src of [worker, server]) {
 assert(worker.includes("createNotionSync"));
 assert(worker.includes("x-cfg-notion"));
 assert(server.includes("notion-sync.mjs"));
+const vercelApp = fs.readFileSync(path.join("vercel", "lib", "app.js"), "utf8");
+assert(vercelApp.includes("/api/notion/refresh"));
+assert(vercelApp.includes("notion-sync.mjs"));
 
 function mockNotion(pages, seen) {
   return http.createServer((req, res) => {

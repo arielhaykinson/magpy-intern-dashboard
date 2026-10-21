@@ -17,12 +17,13 @@ Then open http://localhost:8765
 - `NOTION_API_BASE` – optional override for tests. Defaults to `https://api.notion.com/v1`.
 
 ## Deploy
+- Vercel (Solavant): import this repo and leave **Root Directory** as the repository root. `vercel.json` builds a static copy of `vercel/public/` and routes `/api/*` to one Node function (`api/[...path].js`). See `vercel/README.md` for env vars.
 - Render: `render.yaml` blueprint (Node web service + persistent disk at `/data`).
 - Docker: `docker build -t magpy . && docker run -p 8765:8765 -v magpy-data:/data magpy`
 
 On Render, set `APP_PASSWORD` and `SESSION_SECRET` in the service's Environment tab (they are declared in `render.yaml` with `sync: false`, so they are never stored in the repo). Failed logins are rate limited (5 per 10 minutes per IP).
 
-To show edits Myles makes on the Intern Tasks board, also set `NOTION_TOKEN` (Render environment, and `npx wrangler secret put NOTION_TOKEN` for the Worker) and share the **Intern Tasks** database with that integration. Restart or redeploy after the token is set. The "Magpy Intern Dashboard (Ariel)" database is an old copy of this app's own rows and is not the board to share.
+To show edits Myles makes on the Intern Tasks board, set `NOTION_TOKEN` and share the **Intern Tasks** database with that integration. That applies to Vercel, Render, and the Cloudflare Worker (`npx wrangler secret put NOTION_TOKEN`). Restart or redeploy after the token is set. The "Magpy Intern Dashboard (Ariel)" database is an old copy of this app's own rows and is not the board to share.
 
 ## Comments and activity
 Each task has a comment thread in its edit window, and the Activity tab lists recent changes (created, status/priority/owner/due changes, comments, meeting requests) with who and when. Both sync live and are stored in `db.json` (`comments`, `activity`); older data files load unchanged.

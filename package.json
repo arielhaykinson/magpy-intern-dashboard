@@ -1,0 +1,7 @@
+{
+  "name": "magpy-intern-dashboard",
+  "private": true,
+  "scripts": {
+    "build": "node vercel/copy-public.js"
+  }
+}
