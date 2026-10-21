@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { createNotionSync, notionPublic, DEFAULT_SYNC_MS } from "../../notion-sync.mjs";
 
 export default {
   async fetch(request, env) {
@@ -7,6 +8,10 @@ export default {
       // Pass current secrets per request: the DO's own env is frozen at construction.
       const h = new Headers(request.headers);
       h.set("x-cfg-pw", env.APP_PASSWORD || ""); h.set("x-cfg-ss", env.SESSION_SECRET || "");
+      h.set("x-cfg-notion", env.NOTION_TOKEN || "");
+      h.set("x-cfg-notion-db", env.NOTION_DATABASE_ID || "");
+      h.set("x-cfg-notion-ms", env.NOTION_SYNC_MS || "");
+      h.set("x-cfg-notion-api", env.NOTION_API_BASE || "");
       return env.DASHBOARD.get(env.DASHBOARD.idFromName("main")).fetch(new Request(request, { headers: h }));
     }
     return env.ASSETS.fetch(request);
@@ -84,7 +89,7 @@ export class Dashboard extends DurableObject {
 
   async load() {
     const s = this.ctx.storage, g = async (k, d) => (await s.get(k)) ?? d;
-    const db = { tasks: await g("tasks", null), hours: await g("hours", {}), tombstones: await g("tombstones", {}), meetings: await g("meetings", []), asks: await g("asks", []), activity: await g("activity", []), comments: {} };
+    const db = { tasks: await g("tasks", null), hours: await g("hours", {}), tombstones: await g("tombstones", {}), meetings: await g("meetings", []), asks: await g("asks", []), activity: await g("activity", []), notion: await g("notion", null), comments: {} };
     for (const [k, v] of await s.list({ prefix: "c:" })) db.comments[k.slice(2)] = v;
     this.db = db;
     if (!Array.isArray(db.tasks)) { db.tasks = seedTasks(); this.mark("tasks", "hours", "tombstones", "meetings", "asks", "activity"); await this.flush(); }
@@ -99,7 +104,37 @@ export class Dashboard extends DurableObject {
     }
     this.dirty.clear(); if (Object.keys(out).length) await s.put(out);
   }
-  view() { const db = this.db; return { tasks: db.tasks, meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])) }; }
+  view() { const db = this.db; return { tasks: db.tasks, meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])), notion: notionPublic(db.notion, !!this._notionToken, db.tasks) }; }
+  ensureNotion() {
+    if (this.notionSync) return this.notionSync;
+    this.notionSync = createNotionSync({
+      token: () => this._notionToken || "",
+      databaseId: () => this._notionDb || "",
+      syncMs: () => this._notionMs,
+      apiBase: () => this._notionApi || "",
+      getState: () => this.db,
+      commit: async (next, meta) => {
+        this.db.tasks = next.tasks; this.db.tombstones = next.tombstones; this.db.notion = next.notion;
+        if (meta.tasksChanged) {
+          const n = (next.tasks || []).filter((t) => t.notionId).length;
+          this.log("Notion", "sync", null, `synced ${n} tasks from Intern Tasks`);
+          this.mark("tasks", "tombstones", "notion");
+          await this.flush();
+          this.broadcast("notion");
+        }
+      },
+    });
+    return this.notionSync;
+  }
+  startNotionPoll() {
+    if (this.notionTimer || !this._notionToken) return;
+    const ms = Math.max(5000, +this._notionMs || DEFAULT_SYNC_MS);
+    this.notionTimer = setInterval(() => { this.ensureNotion().refresh(false).catch(() => {}); }, ms);
+  }
+  stopNotionPoll() {
+    if (this.clients.size || !this.notionTimer) return;
+    clearInterval(this.notionTimer); this.notionTimer = null;
+  }
   log(by, kind, task, text) {
     const a = this.db.activity;
     a.push({ id: actId(), at: new Date().toISOString(), who: String(by || "").slice(0, 40), kind, taskId: task ? task.id : "", title: task ? task.title : "", text: String(text || "").slice(0, 200) });
@@ -120,10 +155,11 @@ export class Dashboard extends DurableObject {
   sse(request) {
     const { readable, writable } = new TransformStream(), w = writable.getWriter();
     this.clients.add(w);
-    const drop = () => { this.clients.delete(w); w.close().catch(() => {}); if (!this.clients.size && this.timer) { clearInterval(this.timer); this.timer = null; } };
+    const drop = () => { this.clients.delete(w); w.close().catch(() => {}); if (!this.clients.size && this.timer) { clearInterval(this.timer); this.timer = null; } this.stopNotionPoll(); };
     request.signal.addEventListener("abort", drop); w.closed.catch(() => {}).then(drop);
     w.write(enc.encode("retry: 1000\n\n"));
     if (!this.timer) this.timer = setInterval(() => { const p = enc.encode(": ping\n\n"); for (const c of [...this.clients]) c.write(p).catch(() => this.clients.delete(c)); }, 15000);
+    this.startNotionPoll();
     return new Response(readable, { headers: { "content-type": "text/event-stream", "cache-control": "no-store", "x-accel-buffering": "no" } });
   }
 
@@ -140,6 +176,10 @@ export class Dashboard extends DurableObject {
   async fetch(request) {
     await this.init();
     this._pw = request.headers.get("x-cfg-pw") || ""; this._ss = request.headers.get("x-cfg-ss") || "";
+    this._notionToken = request.headers.get("x-cfg-notion") || "";
+    this._notionDb = request.headers.get("x-cfg-notion-db") || "";
+    this._notionMs = request.headers.get("x-cfg-notion-ms") || "";
+    this._notionApi = request.headers.get("x-cfg-notion-api") || "";
     try { return await this.route(request); } catch (e) { return this.json(500, { error: String(e.message || e) }); }
   }
   json(code, obj, headers) { return new Response(JSON.stringify(obj), { status: code, headers: { "content-type": "application/json", "cache-control": "no-store", ...headers } }); }
@@ -170,7 +210,8 @@ export class Dashboard extends DurableObject {
     if (p === "/api/logout" && M === "POST") return send(200, { ok: true }, { "set-cookie": this.cookie(url, "", 0) });
     if (this.password && !(await this.hasSession(request))) return send(401, { error: "login required" });
     if (p === "/api/events") return this.sse(request);
-    if (p === "/api/data" && M === "GET") return send(200, this.view());
+    if (p === "/api/data" && M === "GET") { await this.ensureNotion().refresh(false); return send(200, this.view()); }
+    if (p === "/api/notion/refresh" && M === "POST") return send(200, await this.ensureNotion().refresh(true));
 
     if (p === "/api/task" && M === "PUT") {
       const t = await this.body(request); if (!t.id || typeof t.title !== "string") return send(400, { error: "bad task" });
@@ -179,12 +220,15 @@ export class Dashboard extends DurableObject {
       if ((cur && cur.updatedAt > t.updatedAt) || (db.tombstones[t.id] || 0) > t.updatedAt) return send(200, { applied: false, task: cur || null });
       const nt = { id: t.id, updatedAt: t.updatedAt }; for (const k of FIELDS) nt[k] = String(t[k] ?? ""); nt.priority = normPri(nt.priority);
       nt.docs = cleanDocs(t.docs === undefined ? (cur && cur.docs) : t.docs, cur && cur.docs, by);
+      if (cur && cur.notionId) { nt.notionId = cur.notionId; nt.notionEdited = cur.notionEdited; nt.notionUrl = cur.notionUrl || ""; }
       this.logTaskChange(by, cur, nt); logDocs((...a) => this.log(...a), by, cur, nt); i >= 0 ? (db.tasks[i] = nt) : db.tasks.push(nt); delete db.tombstones[t.id];
-      this.mark("tasks", "tombstones"); return this.done(by, 200, { applied: true, task: nt });
+      const pushed = await this.ensureNotion().pushTask(nt);
+      this.mark("tasks", "tombstones"); return this.done(by, 200, { applied: true, task: nt, notionError: pushed.error || "" });
     }
     if (p.startsWith("/api/task/") && M === "DELETE") {
       const id = decodeURIComponent(p.slice(10)), at = +url.searchParams.get("updatedAt") || Date.now(), cur = db.tasks.find((x) => x.id === id);
       if (cur && cur.updatedAt > at) return send(200, { applied: false });
+      if (cur && cur.notionId) { const archived = await this.ensureNotion().archiveTask(cur); if (archived.error) return send(502, { error: archived.error }); }
       if (cur) this.log(by, "deleted", cur, "deleted this task");
       db.tasks = db.tasks.filter((x) => x.id !== id); delete db.comments[id]; db.tombstones[id] = at; this.mark("tasks", "tombstones", "c:" + id);
       return this.done(by, 200, { applied: true });
@@ -254,8 +298,11 @@ export class Dashboard extends DurableObject {
     }
     if (p === "/api/reset" && M === "POST") {
       const oldC = Object.keys(db.comments);
-      this.db = { tasks: seedTasks(), hours: {}, tombstones: {}, meetings: [], asks: db.asks, comments: {}, activity: [] };
-      this.mark("tasks", "hours", "tombstones", "meetings", "asks", "activity", ...oldC.map((k) => "c:" + k)); return this.done(by, 200, { ok: true });
+      this.db = { tasks: seedTasks(), hours: {}, tombstones: {}, meetings: [], asks: db.asks, comments: {}, activity: [], notion: null };
+      this.mark("tasks", "hours", "tombstones", "meetings", "asks", "activity", "notion", ...oldC.map((k) => "c:" + k));
+      await this.flush(); this.broadcast(by);
+      await this.ensureNotion().refresh(true);
+      return send(200, { ok: true });
     }
     return send(404, { error: "not found" });
   }

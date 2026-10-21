@@ -29,7 +29,8 @@ if (!db.priorityMigrated) {
 db.hours ||= {}; db.tombstones ||= {}; db.meetings ||= []; db.asks ||= []; db.comments ||= {}; db.activity ||= [];
 function persist() { const tmp = DB + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(db, null, 1)); fs.renameSync(tmp, DB); dirty = true; }
 if (migrated) persist();
-const view = () => ({ tasks: db.tasks, meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])) });
+let notionPublicFn = () => ({ configured: !!process.env.NOTION_TOKEN, ok: false, databaseId: "", syncedAt: 0, error: "", warning: "", count: (db.tasks || []).filter((t) => t.notionId).length });
+const view = () => ({ tasks: db.tasks, meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])), notion: notionPublicFn() });
 
 function backup() {
   if (!dirty) return; dirty = false;
@@ -41,6 +42,30 @@ backup(); setInterval(backup, 10 * 60 * 1000).unref();
 const clients = new Set();
 function broadcast(by) { const m = `event: change\ndata: ${JSON.stringify({ by: by || "", t: Date.now() })}\n\n`; for (const r of clients) r.write(m); }
 setInterval(() => { for (const r of clients) r.write(": ping\n\n"); }, 15000).unref();
+
+let notionSync = { refresh: async () => notionPublicFn(), pushTask: async (task) => ({ task, error: "" }), archiveTask: async () => ({ error: "" }) };
+const notionReady = import("./notion-sync.mjs").then((m) => {
+  notionPublicFn = () => m.notionPublic(db.notion, !!process.env.NOTION_TOKEN, db.tasks);
+  notionSync = m.createNotionSync({
+    token: () => process.env.NOTION_TOKEN || "",
+    databaseId: () => process.env.NOTION_DATABASE_ID || "",
+    syncMs: () => process.env.NOTION_SYNC_MS,
+    apiBase: () => process.env.NOTION_API_BASE || "",
+    getState: () => db,
+    commit(next, meta) {
+      db.tasks = next.tasks; db.tombstones = next.tombstones; db.notion = next.notion;
+      if (meta.tasksChanged) {
+        const n = (next.tasks || []).filter((t) => t.notionId).length;
+        log("Notion", "sync", null, `synced ${n} tasks from Intern Tasks`);
+        persist(); broadcast("notion");
+      }
+    },
+  });
+  const ms = Math.max(5000, +process.env.NOTION_SYNC_MS || m.DEFAULT_SYNC_MS);
+  const tick = () => notionSync.refresh(false).catch((e) => console.error("notion", e));
+  setInterval(tick, ms).unref();
+  if (process.env.NOTION_TOKEN) tick();
+}).catch((e) => console.error("notion setup", e));
 
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".png": "image/png", ".svg": "image/svg+xml", ".json": "application/json" };
 const body = (req) => new Promise((ok, no) => { let b = ""; req.on("data", (c) => { b += c; if (b.length > 1e6) { no(new Error("big")); req.destroy(); } }); req.on("end", () => { try { ok(JSON.parse(b || "{}")); } catch (e) { no(e); } }); });
@@ -120,6 +145,7 @@ const FIELDS = ["title", "status", "owner", "due", "priority", "area", "notes"];
 http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x"), p = url.pathname, by = req.headers["x-user"] || "";
   try {
+    await notionReady;
     if (p === "/api/session" && req.method === "GET") return send(res, 200, { required: !!APP_PASSWORD, ok: !APP_PASSWORD || hasSession(req) });
     if (p === "/api/login" && req.method === "POST") {
       if (!APP_PASSWORD) return send(res, 200, { ok: true, required: false });
@@ -141,7 +167,8 @@ http.createServer(async (req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
       res.write("retry: 1000\n\n"); clients.add(res); req.on("close", () => clients.delete(res)); return;
     }
-    if (p === "/api/data" && req.method === "GET") return send(res, 200, view());
+    if (p === "/api/data" && req.method === "GET") { await notionSync.refresh(false); return send(res, 200, view()); }
+    if (p === "/api/notion/refresh" && req.method === "POST") { const st = await notionSync.refresh(true); return send(res, 200, st); }
     if (p === "/api/task" && req.method === "PUT") {
       const t = await body(req); if (!t.id || typeof t.title !== "string") return send(res, 400, { error: "bad task" });
       t.updatedAt = +t.updatedAt || Date.now();
@@ -149,12 +176,15 @@ http.createServer(async (req, res) => {
       if ((cur && cur.updatedAt > t.updatedAt) || (db.tombstones[t.id] || 0) > t.updatedAt) return send(res, 200, { applied: false, task: cur || null });
       const nt = { id: t.id, updatedAt: t.updatedAt }; for (const k of FIELDS) nt[k] = String(t[k] ?? ""); nt.priority = normPri(nt.priority);
       nt.docs = cleanDocs(t.docs === undefined ? (cur && cur.docs) : t.docs, cur && cur.docs, by);
+      if (cur && cur.notionId) { nt.notionId = cur.notionId; nt.notionEdited = cur.notionEdited; nt.notionUrl = cur.notionUrl || ""; }
       logTaskChange(by, cur, nt); logDocs(by, cur, nt); i >= 0 ? (db.tasks[i] = nt) : db.tasks.push(nt); delete db.tombstones[t.id];
-      persist(); broadcast(by); return send(res, 200, { applied: true, task: nt });
+      const pushed = await notionSync.pushTask(nt);
+      persist(); broadcast(by); return send(res, 200, { applied: true, task: nt, notionError: pushed.error || "" });
     }
     if (p.startsWith("/api/task/") && req.method === "DELETE") {
       const id = decodeURIComponent(p.slice(10)), at = +url.searchParams.get("updatedAt") || Date.now(), cur = db.tasks.find((x) => x.id === id);
       if (cur && cur.updatedAt > at) return send(res, 200, { applied: false });
+      if (cur && cur.notionId) { const archived = await notionSync.archiveTask(cur); if (archived.error) return send(res, 502, { error: archived.error }); }
       if (cur) log(by, "deleted", cur, "deleted this task"); db.tasks = db.tasks.filter((x) => x.id !== id); delete db.comments[id]; db.tombstones[id] = at; persist(); broadcast(by); return send(res, 200, { applied: true });
     }
     const cm = p.match(/^\/api\/task\/([^/]+)\/comments$/);
@@ -219,7 +249,8 @@ http.createServer(async (req, res) => {
       a.reply = b.reply.trim(); a.status = "handled"; a.repliedAt = new Date().toISOString(); persist(); broadcast(by); return send(res, 200, { ask: a });
     }
     if (p === "/api/reset" && req.method === "POST") {
-      db = { seeded: true, tasks: seedTasks(), hours: {}, tombstones: {}, meetings: [], asks: db.asks, comments: {}, activity: [] }; persist(); broadcast(by); return send(res, 200, { ok: true });
+      db = { seeded: true, tasks: seedTasks(), hours: {}, tombstones: {}, meetings: [], asks: db.asks, comments: {}, activity: [], notion: null }; persist(); broadcast(by);
+      await notionSync.refresh(true); return send(res, 200, { ok: true });
     }
     if (p.startsWith("/api/")) return send(res, 404, { error: "not found" });
     let f = path.normalize(path.join(ROOT, p === "/" ? "index.html" : decodeURIComponent(p)));

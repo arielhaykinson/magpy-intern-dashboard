@@ -1,5 +1,5 @@
 const STATUSES = ["Open", "In Progress", "Review", "Done"];
-const OWNERS = ["Myles", "Ariel", "Can", "Unassigned"];
+const OWNERS = ["Myles", "Ariel", "Can", "Advay", "Unassigned"];
 const INTERNS = ["Ariel", "Can"], TARGET = 15;
 const SCOLOR = { Open: "var(--s-open)", "In Progress": "var(--s-prog)", Review: "var(--s-rev)", Done: "var(--s-done)" };
 const I = (p, c = "ic") => `<svg class="${c}" viewBox="0 0 16 16" aria-hidden="true">${p}</svg>`;
@@ -172,10 +172,29 @@ function greet() {
 function setupSync() {
   const top = document.querySelector(".top"), box = document.createElement("div");
   box.className = "sync"; box.style.cssText = "display:flex;gap:10px;align-items:center;font-size:12px;color:#6b6b60;margin-top:6px";
-  box.innerHTML = `<label>You are <select id="who"><option value="">choose…</option>${["Myles", "Ariel", "Can"].map((n) => `<option>${n}</option>`).join("")}</select></label><span id="syncState" aria-live="polite"></span>`;
+  box.innerHTML = `<label>You are <select id="who"><option value="">choose…</option>${["Myles", "Ariel", "Can", "Advay"].map((n) => `<option>${n}</option>`).join("")}</select></label><button type="button" id="notionRefresh">Refresh Notion</button><span id="syncState" aria-live="polite"></span>`;
   top.appendChild(box); $("#who").value = Store.user();
   $("#who").onchange = () => { Store.setUser($("#who").value); greet(); };
-  const paint = () => { const s = Store.status(); $("#syncState").textContent = s.demo ? "Demo (local only)" : !s.online ? "● Offline" : s.saving ? "Saving…" : "● Saved"; $("#syncState").style.color = !s.online && !s.demo ? "#b4533c" : ""; };
+  let notionNote = "";
+  const paint = () => {
+    const s = Store.status();
+    const n = data.notion || {};
+    let extra = notionNote ? " · " + notionNote : "";
+    if (!extra && !s.demo && n.configured) extra = n.error ? " · Notion needs a look" : n.warning ? " · Notion database corrected" : n.syncedAt ? " · Notion synced" : "";
+    $("#syncState").textContent = s.demo ? "Demo (local only)" : !s.online ? "● Offline" : s.saving ? "Saving…" : "● Saved" + extra;
+    $("#syncState").style.color = !s.online && !s.demo ? "#b4533c" : "";
+    const b = $("#notionRefresh");
+    if (b) { b.hidden = !!s.demo; b.title = n.warning || n.error || "Pull the latest tasks from the Notion Intern Tasks board"; }
+  };
+  $("#notionRefresh").onclick = async () => {
+    const b = $("#notionRefresh"); b.disabled = true; notionNote = "refreshing Notion"; paint();
+    try {
+      const r = await Store.refreshNotion();
+      data = await Store.load(); render();
+      notionNote = !r || r.configured === false ? "set NOTION_TOKEN and share Intern Tasks with the integration" : r.error ? String(r.error).slice(0, 140) : "";
+    } catch (e) { notionNote = "Notion refresh failed"; }
+    b.disabled = false; paint();
+  };
   if (authRequired) { const o = document.createElement("a"); o.href = "#"; o.id = "logout"; o.textContent = "Log out"; o.style.cssText = "color:inherit;margin-left:auto"; o.onclick = async (e) => { e.preventDefault(); await Store.logout(); location.reload(); }; box.appendChild(o); }
   paint(); if (demo) return;
   let busy = false, again = false;
