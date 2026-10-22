@@ -11,12 +11,19 @@ Then open http://localhost:8765
 - `APP_PASSWORD` – shared team password. When set, every `/api/*` route and the live-sync stream require login (signed, HttpOnly session cookie, 30 days; `Secure` behind https). When unset, login is disabled (handy for local use).
 - `SESSION_SECRET` – long random string used to sign session cookies (recommended with `APP_PASSWORD`; if omitted, one is derived from the password). Changing it logs everyone out.
 - `DATA_DIR` (default `./data`) – data is stored in `$DATA_DIR/db.json`, with backups in `$DATA_DIR/backups/` every 10 minutes (newest 48 kept).
+- `NOTION_TOKEN` – Notion internal integration secret. When set, tasks are read from **Solavant Interns · Tasks** (not the stale "Magpy Intern Dashboard" mirror) about every 30 seconds, and **Refresh Notion** pulls immediately. Dashboard edits are written back. When unset, the dashboard keeps its local task list.
+- `NOTION_DATABASE_ID` – optional. Defaults to Solavant Interns · Tasks `057cf17c94bb4acf988f926775660ab8`. If this is set to the mirror database `67b0ae62643246289339316b82f2a13e`, it is ignored. The older Intern Tasks id `66707f68214540aabdbc3c14ccacc623` is not the default; the SCM Team integration cannot read it.
+- `NOTION_SYNC_MS` – optional poll interval in milliseconds (minimum 5000, default 30000).
+- `NOTION_API_BASE` – optional override for tests. Defaults to `https://api.notion.com/v1`.
 
 ## Deploy
+- Vercel (Solavant): import this repo and leave **Root Directory** as the repository root. `vercel.json` builds a static copy of `vercel/public/` and routes `/api/*` to one Node function (`api/[...path].js`). See `vercel/README.md` for env vars.
 - Render: `render.yaml` blueprint (Node web service + persistent disk at `/data`).
 - Docker: `docker build -t magpy . && docker run -p 8765:8765 -v magpy-data:/data magpy`
 
 On Render, set `APP_PASSWORD` and `SESSION_SECRET` in the service's Environment tab (they are declared in `render.yaml` with `sync: false`, so they are never stored in the repo). Failed logins are rate limited (5 per 10 minutes per IP).
+
+To show edits Myles makes on the board, set `NOTION_TOKEN` and share **Solavant Interns · Tasks** with that integration. That applies to Vercel, Render, and the Cloudflare Worker (`npx wrangler secret put NOTION_TOKEN`). Restart or redeploy after the token is set. The "Magpy Intern Dashboard (Ariel)" database is an old copy of this app's own rows and is not the board to share. Notion status "Not started" shows as Open on the dashboard, and the dashboard writes Open back as "Not started". There is no Description column, so notes stay on the dashboard.
 
 ## Comments and activity
 Each task has a comment thread in its edit window, and the Activity tab lists recent changes (created, status/priority/owner/due changes, comments, meeting requests) with who and when. Both sync live and are stored in `db.json` (`comments`, `activity`); older data files load unchanged.
@@ -37,6 +44,7 @@ Needs Node 22+ and a free Cloudflare account.
     npx wrangler deploy                     # first deploy creates the Worker; prints https://magpy-dashboard.<your-subdomain>.workers.dev
     npx wrangler secret put APP_PASSWORD    # shared team password (login is off if unset)
     npx wrangler secret put SESSION_SECRET  # long random string, e.g. `openssl rand -hex 32`
+    npx wrangler secret put NOTION_TOKEN    # so the board follows Solavant Interns · Tasks (share that database with the integration)
 
 Use `npm run deploy` instead of `npx wrangler deploy` to sync `public/` first. API token permissions: "Edit Cloudflare Workers" template (Workers Scripts: Edit; Account Settings: Read). Setting a secret on a deployed Worker takes effect immediately; changing `SESSION_SECRET` logs everyone out.
 

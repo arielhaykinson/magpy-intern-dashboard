@@ -1,4 +1,6 @@
 data/
+/public/
+.vercel/
 shots/
 node_modules/
 *.log

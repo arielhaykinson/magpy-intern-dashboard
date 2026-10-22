@@ -36,12 +36,26 @@ function file(dir) {
   };
 }
 
+// Per-instance only. Tasks are re-read from Notion, so a cold start still shows the board.
+// Hours, meetings, comments, and asks need Upstash or they disappear with the instance.
+function memory() {
+  let rev = 0, raw = null;
+  return {
+    name: "memory",
+    async read() { return { rev, db: raw ? JSON.parse(raw) : null }; },
+    async cas(expected, db) {
+      if (rev !== expected) return false;
+      rev += 1; raw = JSON.stringify(db); return true;
+    },
+  };
+}
+
 let inst;
 function getStore() {
   if (inst) return inst;
   const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL, token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
   if (url && token) inst = upstash(url, token);
-  else if (process.env.VERCEL && !process.env.MAGPY_ALLOW_FILE) throw new Error("No Redis configured: set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (or add Upstash Redis from the Vercel Marketplace).");
+  else if (process.env.VERCEL && !process.env.MAGPY_ALLOW_FILE) inst = memory();
   else inst = file(process.env.DATA_DIR || path.join(__dirname, "..", ".data"));
   return inst;
 }

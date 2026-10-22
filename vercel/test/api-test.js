@@ -1,11 +1,14 @@
-const assert = require("assert"), fs = require("fs"), os = require("os"), path = require("path");
+const assert = require("assert"), fs = require("fs"), http = require("http"), os = require("os"), path = require("path");
 async function suite(label, setup) {
+  delete process.env.NOTION_TOKEN; delete process.env.NOTION_API_BASE; delete process.env.VERCEL;
   const cleanup = await setup();
   delete require.cache[require.resolve("./harness.js")]; delete require.cache[require.resolve("../lib/kv")]; delete require.cache[require.resolve("../lib/app")]; delete require.cache[require.resolve("../api/[...path].js")];
   const h = require("./harness.js").create(); await new Promise((r) => h.listen(0, r)); const base = "http://localhost:" + h.address().port;
   const call = async (m, u, b, hdr = {}) => { const r = await fetch(base + u, { method: m, headers: { "content-type": "application/json", "x-user": "Ariel", ...hdr }, body: b ? JSON.stringify(b) : undefined }); return { s: r.status, j: await r.json().catch(() => null), r }; };
   let d = (await call("GET", "/api/data")).j;
   assert.equal(d.tasks.length, 8, "seeded 8"); assert.equal(d.tasks[0].priority, "High"); assert(d.rev >= 1);
+  assert.equal(d.notion.configured, false);
+  assert.equal((await call("POST", "/api/notion/refresh")).j.configured, false);
   assert.deepEqual((await call("GET", "/api/data?since=" + d.rev)).j, { rev: d.rev, unchanged: true });
   for (const [pr, want] of [["urgent", "Urgent"], ["HIGH", "High"], ["Medium", "Medium"], ["low", "Low"], ["bogus", "Low"]]) {
     const r = await call("PUT", "/api/task", { id: "p-" + pr, title: "t", priority: pr }); assert.equal(r.j.task.priority, want);
@@ -47,9 +50,75 @@ async function suite(label, setup) {
   delete process.env.APP_PASSWORD; delete process.env.SESSION_SECRET; assert.equal((await call("GET", "/api/data")).s, 200);
   h.close(); await cleanup && cleanup(); console.log("PASS", label);
 }
+function notionPage(title, status, owner, edited) {
+  return {
+    id: "mylespage00000000000000000001", url: "https://www.notion.so/myles", archived: false,
+    last_edited_time: edited || "2026-10-21T19:00:00.000Z",
+    properties: {
+      Title: { type: "title", title: [{ plain_text: title }] },
+      Status: { type: "select", select: status ? { name: status } : null },
+      Owner: { type: "select", select: owner ? { name: owner } : null },
+      Priority: { type: "select", select: { name: "High" } },
+      Area: { type: "select", select: { name: "Magpy" } },
+      Due: { type: "date", date: null },
+      Description: { type: "rich_text", rich_text: [] },
+    },
+  };
+}
+async function notionSuite() {
+  delete process.env.VERCEL; delete process.env.KV_REST_API_URL; delete process.env.KV_REST_API_TOKEN; delete process.env.UPSTASH_REDIS_REST_URL; delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  const pages = [notionPage("Myles moved this to Review", "Review", "Myles")];
+  const seen = [];
+  const mock = http.createServer((req, res) => {
+    let b = ""; req.on("data", (c) => b += c); req.on("end", () => {
+      seen.push({ url: req.url, method: req.method, body: b ? JSON.parse(b) : null });
+      if (req.method === "POST" && /\/databases\/[^/]+\/query$/.test(req.url)) {
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ results: pages, has_more: false, next_cursor: null }));
+      }
+      if (req.method === "PATCH" && /\/pages\//.test(req.url)) {
+        const title = req.url.includes("archived") ? null : (((JSON.parse(b).properties || {}).Title || {}).title || [])[0];
+        if (title && title.text) pages[0].properties.Title.title[0].plain_text = title.text.content;
+        pages[0].last_edited_time = "2026-10-21T20:00:00.000Z";
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ id: pages[0].id, url: pages[0].url, last_edited_time: pages[0].last_edited_time }));
+      }
+      res.writeHead(404); res.end("{}");
+    });
+  });
+  await new Promise((r) => mock.listen(0, "127.0.0.1", r));
+  process.env.NOTION_TOKEN = "test-token";
+  process.env.NOTION_API_BASE = "http://127.0.0.1:" + mock.address().port + "/v1";
+  process.env.NOTION_SYNC_MS = "60000";
+  delete process.env.NOTION_DATABASE_ID;
+  process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "magpy-notion-"));
+  delete require.cache[require.resolve("./harness.js")]; delete require.cache[require.resolve("../lib/kv")]; delete require.cache[require.resolve("../lib/app")]; delete require.cache[require.resolve("../api/[...path].js")];
+  const h = require("./harness.js").create(); await new Promise((r) => h.listen(0, r)); const base = "http://localhost:" + h.address().port;
+  const call = async (m, u, b) => { const r = await fetch(base + u, { method: m, headers: { "content-type": "application/json", "x-user": "Ariel" }, body: b ? JSON.stringify(b) : undefined }); return { s: r.status, j: await r.json() }; };
+  let d = (await call("GET", "/api/data")).j;
+  assert.equal(d.notion.configured, true); assert.equal(d.notion.ok, true);
+  assert.equal(d.tasks.length, 1, "starter rows are replaced by Intern Tasks");
+  assert.equal(d.tasks[0].title, "Myles moved this to Review"); assert.equal(d.tasks[0].owner, "Myles"); assert.equal(d.tasks[0].status, "Review");
+  assert.deepEqual((await call("GET", "/api/data?since=" + d.rev)).j, { rev: d.rev, unchanged: true });
+  pages[0] = notionPage("Myles updated the title", "Review", "Myles", "2026-10-21T19:30:00.000Z");
+  d = (await call("GET", "/api/data")).j;
+  assert.equal(d.tasks[0].title, "Myles moved this to Review", "a fresh cache must not hide a Notion edit until the interval or a manual refresh");
+  const refreshed = await call("POST", "/api/notion/refresh");
+  assert.equal(refreshed.s, 200); assert.equal(refreshed.j.ok, true); assert.equal(refreshed.j.count, 1);
+  d = (await call("GET", "/api/data")).j;
+  assert.equal(d.tasks[0].title, "Myles updated the title");
+  const edited = await call("PUT", "/api/task", { ...d.tasks[0], title: "Edited on the dashboard", updatedAt: Date.now() });
+  assert.equal(edited.j.applied, true); assert.equal(edited.j.notionError, "");
+  assert(seen.some((s) => s.method === "PATCH" && s.url.includes("/pages/")));
+  h.close(); mock.close();
+  delete process.env.NOTION_TOKEN; delete process.env.NOTION_API_BASE;
+  console.log("PASS notion sync");
+}
 (async () => {
-  await suite("file store", async () => { process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "magpy-")); delete process.env.UPSTASH_REDIS_REST_URL; delete process.env.KV_REST_API_URL; });
+  await suite("file store", async () => { process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "magpy-")); delete process.env.UPSTASH_REDIS_REST_URL; delete process.env.KV_REST_API_URL; delete process.env.UPSTASH_REDIS_REST_TOKEN; delete process.env.KV_REST_API_TOKEN; });
   const fu = require("./fake-upstash").create(); await new Promise((r) => fu.srv.listen(0, r));
   await suite("upstash (fake REST, KV_REST_API_* names)", async () => { process.env.KV_REST_API_URL = "http://localhost:" + fu.srv.address().port; process.env.KV_REST_API_TOKEN = "tok"; });
   assert(fu.kv.get("magpy:state")); console.log("upstash calls:", fu.calls()); fu.srv.close();
+  await suite("vercel memory (no redis)", async () => { process.env.VERCEL = "1"; delete process.env.UPSTASH_REDIS_REST_URL; delete process.env.KV_REST_API_URL; delete process.env.UPSTASH_REDIS_REST_TOKEN; delete process.env.KV_REST_API_TOKEN; delete process.env.MAGPY_ALLOW_FILE; });
+  await notionSuite();
 })().catch((e) => { console.error("FAIL", e); process.exit(1); });

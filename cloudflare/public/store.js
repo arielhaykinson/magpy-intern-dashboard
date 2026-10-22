@@ -25,6 +25,7 @@
     async saveMeeting(m) { const d = await this.load(); d.meetings ||= []; if (!m.id) { m.id = "m" + uid(); m.status = "requested"; m.googleEventId = null; } const i = d.meetings.findIndex((x) => x.id === m.id); i >= 0 ? (d.meetings[i] = m) : d.meetings.push(m); write(d); return m; },
     async addComment(id, text) { const d = await this.load(); const c = { id: "c" + uid(), author: Store.user() || "Ariel", text, at: new Date().toISOString() }; ((d.comments ||= {})[id] ||= []).push(c); write(d); return c; },
     async sendAsk(text) { return null; },
+    async refreshNotion() { return { configured: false, demo: true }; },
     async cancelMeeting(id) { const d = await this.load(); const m = (d.meetings || []).find((x) => x.id === id); if (m) { m.status = "cancelled"; write(d); } },
   };
 
@@ -59,11 +60,12 @@
     async reset() { await api("POST", "/api/reset"); },
     async saveMeeting(m) { const r = m.id ? await api("PUT", "/api/meetings/" + encodeURIComponent(m.id), m) : await api("POST", "/api/meetings", { ...m, createdBy: Store.user() }); return r.meeting; },
     async sendAsk(text) { const r = await api("POST", "/api/asks", { text, createdBy: Store.user() }); return r.ask; },
+    async refreshNotion() { return api("POST", "/api/notion/refresh", {}); },
     async cancelMeeting(id) { await api("DELETE", "/api/meetings/" + encodeURIComponent(id)); },
   };
   const be = () => (isDemo() ? local : remote);
   window.Store = {
-    load: () => be().load(), saveTask: (t) => be().saveTask(t), deleteTask: (id) => be().deleteTask(id),
+    load: () => be().load(), saveTask: (t) => be().saveTask(t), deleteTask: (id) => be().deleteTask(id), refreshNotion: () => be().refreshNotion(),
     setHours: (p, w, h) => be().setHours(p, w, h), saveMeeting: (m) => be().saveMeeting(m), cancelMeeting: (id) => be().cancelMeeting(id), sendAsk: (t) => be().sendAsk(t), addComment: (id, t) => be().addComment(id, t),
     async session() { try { const r = await fetch("/api/session", { cache: "no-store" }); return r.ok ? await r.json() : { required: false, ok: true }; } catch { return { required: false, ok: true }; } },
     async login(password) { const r = await fetch("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "Could not sign in."); return j; },

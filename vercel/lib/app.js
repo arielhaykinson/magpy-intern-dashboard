@@ -16,7 +16,55 @@ function normalize(db) {
   for (const t of db.tasks) t.priority = normPri(t.priority);
   return db;
 }
-const view = (db, rev) => ({ rev, tasks: db.tasks, meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])) });
+const notionConfigured = () => !!(process.env.NOTION_TOKEN || "").trim();
+const notionReady = import("../../notion-sync.mjs");
+function notionFresh(db) {
+  const meta = (db && db.notion) || {};
+  const n = +process.env.NOTION_SYNC_MS;
+  const syncMs = Number.isFinite(n) && n >= 5000 ? n : 30000;
+  const wait = meta.error ? Math.min(syncMs, 10000) : syncMs;
+  return !!(meta.syncedAt && Date.now() - meta.syncedAt < wait);
+}
+function notionView(db) {
+  const configured = notionConfigured(), n = (db && db.notion) || {};
+  return {
+    configured, ok: configured && !n.error, databaseId: configured ? (n.databaseId || "") : "",
+    syncedAt: n.syncedAt || 0, error: configured ? (n.error || "") : "", warning: configured ? (n.warning || "") : "",
+    count: ((db && db.tasks) || []).filter((t) => t.notionId).length,
+  };
+}
+async function notionSyncFor(db) {
+  const m = await notionReady;
+  if (!db.notion) db.notion = m.blankNotionMeta();
+  return m.createNotionSync({
+    token: () => process.env.NOTION_TOKEN || "",
+    databaseId: () => process.env.NOTION_DATABASE_ID || "",
+    syncMs: () => process.env.NOTION_SYNC_MS,
+    apiBase: () => process.env.NOTION_API_BASE || "",
+    getState: () => db,
+    commit: async (next, info) => {
+      db.tasks = next.tasks; db.tombstones = next.tombstones; db.notion = next.notion;
+      if (info && info.tasksChanged) {
+        const n = (next.tasks || []).filter((t) => t.notionId).length;
+        log(db, "Notion", "sync", null, `synced ${n} tasks from Solavant Interns · Tasks`);
+      }
+    },
+  });
+}
+// Serverless has no long-lived poll. Freshness is the syncedAt stored with the document,
+// so every instance waits the same interval, and Refresh Notion forces a pull.
+async function readWithNotion(force) {
+  if (!notionConfigured()) return readState();
+  const s = getStore();
+  for (let i = 0; i < 6; i++) {
+    const { rev, db } = await readState();
+    if (!force && notionFresh(db)) return { rev, db };
+    await (await notionSyncFor(db)).refresh(true);
+    if (await s.cas(rev, db)) return { rev: rev + 1, db };
+  }
+  throw new Error("could not save Notion sync");
+}
+const view = (db, rev) => ({ rev, tasks: db.tasks, meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])), notion: notionView(db) });
 
 async function readState() {
   const s = getStore();
@@ -31,7 +79,7 @@ async function mutate(fn) {
   const s = getStore();
   for (let i = 0; i < 12; i++) {
     const { rev, db } = await readState();
-    const r = fn(db);
+    const r = await fn(db);
     if (!r.write) return r;
     if (await s.cas(rev, db)) return r;
     await new Promise((ok) => setTimeout(ok, 15 + Math.random() * 60 * (i + 1)));
@@ -143,24 +191,43 @@ async function handler(req, res) {
 
     if (p === "/api/events") return send(res, 410, { error: "SSE not available on Vercel; poll /api/data?since=<rev>" });
     if (p === "/api/data" && M === "GET") {
-      const { rev, db } = await readState(), since = url.searchParams.get("since");
+      const since = url.searchParams.get("since");
+      if (since !== null && since !== "") {
+        const cur = await readState();
+        if (+since === cur.rev && (!notionConfigured() || notionFresh(cur.db))) return send(res, 200, { rev: cur.rev, unchanged: true });
+      }
+      const { rev, db } = await readWithNotion(false);
       if (since !== null && since !== "" && +since === rev) return send(res, 200, { rev, unchanged: true });
       return send(res, 200, view(db, rev));
+    }
+    if (p === "/api/notion/refresh" && M === "POST") {
+      const { db } = await readWithNotion(true);
+      return send(res, 200, notionView(db));
     }
     if (p === "/api/task" && M === "PUT") {
       const t = await readBody(req); if (!t.id || typeof t.title !== "string") return send(res, 400, { error: "bad task" });
       t.updatedAt = +t.updatedAt || Date.now();
-      return reply(res, await mutate((db) => {
+      return reply(res, await mutate(async (db) => {
         const i = db.tasks.findIndex((x) => x.id === t.id), cur = db.tasks[i];
         if ((cur && cur.updatedAt > t.updatedAt) || (db.tombstones[t.id] || 0) > t.updatedAt) return { code: 200, body: { applied: false, task: cur || null } };
         const nt = { id: t.id, updatedAt: t.updatedAt }; for (const k of FIELDS) nt[k] = String(t[k] ?? ""); nt.priority = normPri(nt.priority);
         nt.docs = cleanDocs(t.docs === undefined ? (cur && cur.docs) : t.docs, cur && cur.docs, by);
+        if (cur && cur.notionId) { nt.notionId = cur.notionId; nt.notionEdited = cur.notionEdited; nt.notionUrl = cur.notionUrl || ""; }
         logTaskChange(db, by, cur, nt); logDocs(db, by, cur, nt); i >= 0 ? (db.tasks[i] = nt) : db.tasks.push(nt); delete db.tombstones[t.id];
-        return { code: 200, body: { applied: true, task: nt }, write: true };
+        let notionError = "";
+        if (notionConfigured()) notionError = (await (await notionSyncFor(db)).pushTask(nt)).error || "";
+        return { code: 200, body: { applied: true, task: nt, notionError }, write: true };
       }));
     }
-    if (p.startsWith("/api/task/") && M === "DELETE") {
+    if (p.startsWith("/api/task/") && M === "DELETE" && !p.endsWith("/comments")) {
       const id = decodeURIComponent(p.slice(10)), at = +url.searchParams.get("updatedAt") || Date.now();
+      if (notionConfigured()) {
+        const cur = (await readState()).db.tasks.find((x) => x.id === id);
+        if (cur && cur.notionId && !(cur.updatedAt > at)) {
+          const archived = await (await notionSyncFor((await readState()).db)).archiveTask(cur);
+          if (archived.error) return send(res, 502, { error: archived.error });
+        }
+      }
       return reply(res, await mutate((db) => {
         const cur = db.tasks.find((x) => x.id === id);
         if (cur && cur.updatedAt > at) return { code: 200, body: { applied: false } };
@@ -245,10 +312,12 @@ async function handler(req, res) {
       }));
     }
     if (p === "/api/reset" && M === "POST") {
-      return reply(res, await mutate((db) => {
+      const r = await mutate((db) => {
         const f = emptyDb(); f.asks = db.asks; Object.keys(db).forEach((k) => delete db[k]); Object.assign(db, f);
         return { code: 200, body: { ok: true }, write: true };
-      }));
+      });
+      if (r.code === 200 && notionConfigured()) await readWithNotion(true);
+      return reply(res, r);
     }
     return send(res, 404, { error: "not found" });
   } catch (e) { return send(res, 500, { error: String((e && e.message) || e) }); }

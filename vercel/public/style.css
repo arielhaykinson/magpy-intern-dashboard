@@ -52,7 +52,7 @@ input::placeholder{color:#b0a99c}
 .meta{display:flex;gap:14px;align-items:center;font-size:12px;color:var(--mut);white-space:nowrap}
 .own{display:inline-flex;align-items:center;gap:8px;min-width:84px;color:var(--ink)}
 .av{width:24px;height:24px;border-radius:50%;display:inline-grid;place-content:center;font-style:normal;font-size:10px;font-weight:600;letter-spacing:.02em;background:#ece8df;color:#6f685c;flex:none}
-.av-Myles{background:#eadfd2;color:#7d5f43}.av-Ariel{background:#dde8df;color:#4d705e}.av-Can{background:#dfe6ec;color:#51697b}
+.av-Myles{background:#eadfd2;color:#7d5f43}.av-Ariel{background:#dde8df;color:#4d705e}.av-Can{background:#dfe6ec;color:#51697b}.av-Advay{background:#efe3d6;color:#6d5338}
 .pri,.status{display:inline-block;padding:1px 10px;border-radius:999px;font-size:11.5px;font-weight:500;line-height:20px;text-align:center}
 .pri.Urgent{background:#ecc9c0;color:#7d3123}.pri.High{background:#f6dfc9;color:#8c5420}.pri.Medium{background:#f3ecd2;color:#76652a}.pri.Low{background:#e5ede7;color:#4d6c5a}
 button.pri{border:0;cursor:pointer;font-family:inherit;transition:filter .15s,box-shadow .15s}button.pri:hover{filter:brightness(.97);box-shadow:0 0 0 2px rgba(107,143,124,.25)}
