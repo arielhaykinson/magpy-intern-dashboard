@@ -13,11 +13,12 @@ Then open http://localhost:8765
 - `DATA_DIR` (default `./data`) – data is stored in `$DATA_DIR/db.json`, with backups in `$DATA_DIR/backups/` every 10 minutes (newest 48 kept).
 - `NOTION_TOKEN` – Notion internal integration secret. When set, tasks are read from **Solavant Interns · Tasks** (not the stale "Magpy Intern Dashboard" mirror) about every 30 seconds, and **Refresh Notion** pulls immediately. Dashboard edits are written back. When unset, the dashboard keeps its local task list.
 - `NOTION_DATABASE_ID` – optional. Defaults to Solavant Interns · Tasks `057cf17c94bb4acf988f926775660ab8`. If this is set to the mirror database `67b0ae62643246289339316b82f2a13e`, it is ignored. The older Intern Tasks id `66707f68214540aabdbc3c14ccacc623` is not the default; the SCM Team integration cannot read it.
+- `PRIVATES_NOTION_DATABASE_ID` – Solavant Private · Tasks, `c7832a86522a4e26ae7311d9662c460b`. The Privates section uses the same `NOTION_TOKEN` and the same sync code, stored under `privates:state` (Magpy stays on `magpy:state`). If that id is missing or Notion returns 404 until the SCM Team connection is added, `/privates` shows an empty list and a not-connected message, then fills in on the next pull once the database is shared. It never reads the Magpy database.
 - `NOTION_SYNC_MS` – optional poll interval in milliseconds (minimum 5000, default 30000).
 - `NOTION_API_BASE` – optional override for tests. Defaults to `https://api.notion.com/v1`.
 
 ## Deploy
-- Vercel (Solavant): import this repo and leave **Root Directory** as the repository root. `vercel.json` builds a static copy of `vercel/public/`, then the Solavant portal in `portal/` (`/` front page, `/login.html` Google sign-in, dashboard at `/magpy/`). `/api/*` goes to one Node function (`api/[...path].js`). `middleware.js` requires Google sign-in when `GOOGLE_CLIENT_ID` is set. See `vercel/README.md` for env vars.
+- Vercel (Solavant): import this repo and leave **Root Directory** as the repository root. `vercel.json` builds a static copy of `vercel/public/`, then the Solavant portal in `portal/` (`/` front page, `/login.html` Google sign-in, Magpy at `/magpy/`, Solavant Private Capital at `/privates/`). `/api/*` goes to one Node function (`api/[...path].js`). `middleware.js` requires Google sign-in when `GOOGLE_CLIENT_ID` is set. See `vercel/README.md` for env vars.
 - Render: `render.yaml` blueprint (Node web service + persistent disk at `/data`).
 - Docker: `docker build -t magpy . && docker run -p 8765:8765 -v magpy-data:/data magpy`
 

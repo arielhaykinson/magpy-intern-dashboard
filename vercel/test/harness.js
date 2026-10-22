@@ -6,6 +6,8 @@ function staticFile(p) {
   if (p === "/login.html") return path.join(PORTAL, "login.html");
   if (p === "/solavant-logo.jpg") return path.join(PORTAL, "solavant-logo.jpg");
   if (p === "/magpy" || p === "/magpy/" || p === "/magpy/index.html") return path.join(PORTAL, "magpy", "index.html");
+  if (p === "/privates" || p === "/privates/" || p === "/privates/index.html") return path.join(PORTAL, "privates", "index.html");
+  if (p.startsWith("/privates/")) { const f = path.normalize(path.join(PORTAL, p.slice(1))); return f.startsWith(path.join(PORTAL, "privates")) ? f : ""; }
   const f = path.normalize(path.join(PUB, p));
   return f.startsWith(PUB) ? f : "";
 }

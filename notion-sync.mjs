@@ -4,6 +4,8 @@
 // The SCM Team integration can read Solavant Interns · Tasks. The older Intern Tasks id 404s for that token.
 
 export const INTERN_TASKS_DATABASE_ID = "057cf17c94bb4acf988f926775660ab8";
+// Solavant Private Capital. Separate from the intern board. Never fall back to INTERN_TASKS_DATABASE_ID.
+export const PRIVATES_TASKS_DATABASE_ID = "c7832a86522a4e26ae7311d9662c460b";
 // Stale export of the dashboard's own rows (Name / Dashboard ID / Source). Not the board Myles edits.
 export const STALE_MIRROR_DATABASE_ID = "67b0ae62643246289339316b82f2a13e";
 export const NOTION_VERSION = "2022-06-28";
@@ -99,6 +101,14 @@ export const DEFAULT_SCHEMA = {
   ownerValues: ["Ariel", "Can", "Myles", "Advay"],
   priorityValues: ["High", "Medium", "Low"],
   areaValues: ["Magpy", "Optix", "Krino", "Solavant", "Research", "Other"],
+  defaultArea: "Magpy",
+};
+
+// Solavant Private · Tasks uses the same status and owner columns, and a shorter Area list.
+export const PRIVATES_SCHEMA = {
+  ...DEFAULT_SCHEMA,
+  defaultArea: "Solavant Private",
+  areaValues: ["Solavant Private", "Research", "Other"],
 };
 
 function remember(list, value) {
@@ -141,6 +151,7 @@ function cloneSchema(schema) {
     ...DEFAULT_SCHEMA,
     ...s,
     statusType: s.statusType || DEFAULT_SCHEMA.statusType,
+    defaultArea: s.defaultArea || DEFAULT_SCHEMA.defaultArea || "Magpy",
     statusValues: [...(s.statusValues || DEFAULT_SCHEMA.statusValues)],
     ownerValues: [...(s.ownerValues || DEFAULT_SCHEMA.ownerValues)],
     priorityValues: [...(s.priorityValues || DEFAULT_SCHEMA.priorityValues)],
@@ -173,7 +184,7 @@ export function mapPage(page, schema) {
       owner: owner || "Unassigned",
       due: dateOnly(textOf(props[s.due])),
       priority: dashPriority(textOf(props[s.priority])),
-      area: textOf(props[s.area]).trim() || "Magpy",
+      area: textOf(props[s.area]).trim() || s.defaultArea || "Magpy",
       notes,
       docs,
       updatedAt: Date.parse(at) || Date.now(),
@@ -182,11 +193,15 @@ export function mapPage(page, schema) {
   };
 }
 
-function explainHttp(status, message) {
+function explainHttp(status, message, label) {
   const detail = String(message || "").slice(0, 240);
   const suffix = detail ? `: ${detail}` : "";
+  const name = label || "Solavant Interns · Tasks";
   if (status === 401) return `Notion rejected the token (401${suffix}). Check NOTION_TOKEN.`;
-  if (status === 403 || status === 404) return `Notion could not read Solavant Interns · Tasks (${status}${suffix}). Share that database with the integration. The old Intern Tasks database and the Magpy Intern Dashboard mirror are different databases.`;
+  if (status === 403 || status === 404) {
+    if (name === "Solavant Interns · Tasks") return `Notion could not read Solavant Interns · Tasks (${status}${suffix}). Share that database with the integration. The old Intern Tasks database and the Magpy Intern Dashboard mirror are different databases.`;
+    return `Not connected. Notion could not read ${name} (${status}${suffix}). In Notion, open Solavant Private and add the SCM Team connection to that database. This list stays empty until then, and fills in on its own once access is granted.`;
+  }
   return `Notion error (${status}): ${detail}`;
 }
 
@@ -197,7 +212,7 @@ export function pageHiddenFromBoard(page) {
 }
 
 // Follow has_more / next_cursor. A single page is at most 100 rows; stopping there hides later edits.
-export async function queryAllPages({ token, databaseId, apiBase, fetchImpl }) {
+export async function queryAllPages({ token, databaseId, apiBase, fetchImpl, label }) {
   const fetchFn = fetchImpl || fetch;
   const base = String(apiBase || "https://api.notion.com/v1").replace(/\/$/, "");
   const pages = [];
@@ -219,13 +234,65 @@ export async function queryAllPages({ token, databaseId, apiBase, fetchImpl }) {
     }
     let j = null;
     try { j = JSON.parse(text); } catch { j = null; }
-    if (!r.ok) return { pages, error: explainHttp(r.status, j && j.message), incomplete: true };
+    if (!r.ok) return { pages, error: explainHttp(r.status, j && j.message, label), incomplete: true };
     pages.push(...(Array.isArray(j.results) ? j.results : []));
     if (!j.has_more) return { pages, error: "", incomplete: false };
     if (!j.next_cursor) return { pages, error: "Notion returned has_more without next_cursor, so the rest of the board was not read.", incomplete: true };
     cursor = j.next_cursor;
   }
   return { pages, error: "Stopped after 50 pages so a cursor loop cannot run forever.", incomplete: true };
+}
+
+// Select and status options live on the database, not on an empty query. A failed retrieve
+// leaves the schema learned from pages so a Magpy pull still succeeds.
+export async function retrieveDatabase({ token, databaseId, apiBase, fetchImpl }) {
+  const fetchFn = fetchImpl || fetch;
+  const base = String(apiBase || "https://api.notion.com/v1").replace(/\/$/, "");
+  try {
+    const r = await fetchFn(`${base}/databases/${databaseId}`, {
+      headers: { Authorization: `Bearer ${token}`, "Notion-Version": NOTION_VERSION },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+
+export function applyDatabaseSchema(schema, db) {
+  const props = (db && db.properties) || {};
+  const s = cloneSchema(schema);
+  const optNames = (prop) => {
+    if (!prop || typeof prop !== "object") return null;
+    const bag = prop.select || prop.status || prop.multi_select;
+    if (!bag || !Array.isArray(bag.options)) return null;
+    const names = bag.options.map((o) => o && o.name).filter(Boolean);
+    return names.length ? names : null;
+  };
+  const titleKey = Object.keys(props).find((k) => props[k] && props[k].type === "title");
+  if (titleKey) s.title = titleKey;
+  if (props.Status && (props.Status.type === "status" || props.Status.type === "select")) {
+    s.status = "Status";
+    s.statusType = props.Status.type;
+    const names = optNames(props.Status);
+    if (names) s.statusValues = names;
+  }
+  const take = (name, type, field, valuesKey) => {
+    if (!(props[name] && props[name].type === type)) return;
+    s[field] = name;
+    if (!valuesKey) return;
+    const names = optNames(props[name]);
+    if (names) s[valuesKey] = names;
+  };
+  take("Owner", "select", "owner", "ownerValues");
+  take("Priority", "select", "priority", "priorityValues");
+  take("Area", "select", "area", "areaValues");
+  take("Due", "date", "due");
+  if (props.Description && props.Description.type === "rich_text") s.notes = "Description";
+  else if (props.Notes && props.Notes.type === "rich_text") s.notes = "Notes";
+  if (s.defaultArea && !(s.areaValues || []).includes(s.defaultArea) && (s.areaValues || []).length) s.defaultArea = s.areaValues[0];
+  return s;
 }
 
 export function isUntouchedSeed(t, comments) {
@@ -260,9 +327,9 @@ export function tasksForView(tasks, configured) {
   return list.filter((t) => t && (t.notionId || t.localDirty));
 }
 
-export function mergeNotionTasks(tasks, pages, tombstones, { partial, dropSeeds, comments } = {}) {
+export function mergeNotionTasks(tasks, pages, tombstones, { partial, dropSeeds, comments, schema: schemaIn } = {}) {
   const tombs = { ...(tombstones || {}) };
-  const schema = cloneSchema();
+  const schema = cloneSchema(schemaIn);
   let changed = false;
   const dropped = [];
   const kept = [];
@@ -347,7 +414,9 @@ export function propertiesForTask(task, schema) {
   const title = String(task.title || "").slice(0, 2000);
   const status = notionStatusName(s, task.status);
   const priority = pickValue(s.priorityValues, task.priority, task.priority === "Urgent" ? "High" : (task.priority || "Medium"));
-  const area = pickValue(s.areaValues, task.area || "Magpy", (s.areaValues || []).includes("Magpy") ? "Magpy" : (task.area || "Magpy"));
+  const wantArea = String((task.area || s.defaultArea || "Magpy")).trim();
+  const areaFallback = (s.areaValues || []).includes(s.defaultArea) ? s.defaultArea : ((s.areaValues || []).includes("Magpy") ? "Magpy" : wantArea);
+  const area = pickValue(s.areaValues, wantArea, areaFallback);
   const ownerKnown = pickValue(s.ownerValues, task.owner, "");
   const statusValue = status ? { name: status } : null;
   const props = {};
@@ -364,7 +433,7 @@ export function propertiesForTask(task, schema) {
   return props;
 }
 
-async function notionWrite({ token, apiBase, fetchImpl, method, path, body }) {
+async function notionWrite({ token, apiBase, fetchImpl, method, path, body, label }) {
   const fetchFn = fetchImpl || fetch;
   const base = String(apiBase || "https://api.notion.com/v1").replace(/\/$/, "");
   const r = await fetchFn(base + path, {
@@ -376,7 +445,7 @@ async function notionWrite({ token, apiBase, fetchImpl, method, path, body }) {
   const text = await r.text();
   let j = null;
   try { j = JSON.parse(text); } catch { j = null; }
-  if (!r.ok) throw new Error(explainHttp(r.status, j && j.message));
+  if (!r.ok) throw new Error(explainHttp(r.status, j && j.message, label));
   return j || {};
 }
 
@@ -406,24 +475,44 @@ export function createNotionSync(opts) {
     const configured = !!opts.token();
     return notionPublic(state().notion, configured, state().tasks);
   }
+  const label = () => (typeof opts.label === "function" ? opts.label() : opts.label) || "";
+  const initialSchema = () => (typeof opts.schema === "function" ? opts.schema() : opts.schema) || null;
   async function run() {
     const token = opts.token();
-    const { databaseId, warning } = resolveDatabaseId(opts.databaseId());
+    const resolve = opts.resolve || resolveDatabaseId;
+    const { databaseId, warning } = resolve(opts.databaseId());
     const meta = metaOf();
     meta.databaseId = databaseId;
     meta.warning = warning;
-    const result = await queryAllPages({ token, databaseId, apiBase: opts.apiBase(), fetchImpl: opts.fetchImpl });
+    if (!databaseId) {
+      meta.syncedAt = Date.now();
+      meta.error = opts.clearWhenUnreadable
+        ? `Not connected. ${label() || "This database"} has no database id. Set PRIVATES_NOTION_DATABASE_ID and share Solavant Private · Tasks with the SCM Team integration.`
+        : `Notion could not read ${label() || "this database"}. The database id is not set.`;
+      const tasks = opts.clearWhenUnreadable ? (state().tasks || []).filter((t) => t && t.localDirty) : state().tasks;
+      await opts.commit({ tasks, tombstones: state().tombstones, notion: meta }, { tasksChanged: false });
+      return;
+    }
+    const result = await queryAllPages({ token, databaseId, apiBase: opts.apiBase(), fetchImpl: opts.fetchImpl, label: label() });
     meta.syncedAt = Date.now();
     const st = state();
     if (result.incomplete && result.pages.length === 0) {
       meta.error = result.error || "Notion sync failed";
-      await opts.commit({ tasks: st.tasks, tombstones: st.tombstones, notion: meta }, { tasksChanged: false });
+      const tasks = opts.clearWhenUnreadable ? (st.tasks || []).filter((t) => t && t.localDirty) : st.tasks;
+      const cleared = tasks.length !== (st.tasks || []).length;
+      await opts.commit({ tasks, tombstones: st.tombstones, notion: meta }, { tasksChanged: cleared });
       return;
+    }
+    let schema = initialSchema();
+    if (!result.incomplete && opts.loadSchema) {
+      const db = await retrieveDatabase({ token, databaseId, apiBase: opts.apiBase(), fetchImpl: opts.fetchImpl });
+      if (db && db.properties) schema = applyDatabaseSchema(schema, db);
     }
     const merged = mergeNotionTasks(st.tasks, result.pages, st.tombstones, {
       partial: !!result.incomplete,
-      dropSeeds: !result.incomplete && result.pages.length > 0,
+      dropSeeds: !result.incomplete && (result.pages.length > 0 || !!opts.dropLocalWithoutPages),
       comments: st.comments,
+      schema,
     });
     meta.error = result.error || "";
     meta.schema = merged.schema;
@@ -457,12 +546,13 @@ export function createNotionSync(opts) {
     task.localDirty = true;
     task.localEditedAt = +task.updatedAt || Date.now();
     const meta = metaOf();
-    const schema = meta.schema || DEFAULT_SCHEMA;
-    const { databaseId } = resolveDatabaseId(opts.databaseId() || meta.databaseId);
+    const resolve = opts.resolve || resolveDatabaseId;
+    const { databaseId } = resolve(opts.databaseId() || meta.databaseId);
+    const schema = meta.schema || initialSchema() || DEFAULT_SCHEMA;
     try {
       const j = task.notionId
-        ? await notionWrite({ token, apiBase: opts.apiBase(), fetchImpl: opts.fetchImpl, method: "PATCH", path: `/pages/${task.notionId}`, body: { properties: propertiesForTask(task, schema) } })
-        : await notionWrite({ token, apiBase: opts.apiBase(), fetchImpl: opts.fetchImpl, method: "POST", path: "/pages", body: { parent: { database_id: databaseId }, properties: propertiesForTask(task, schema) } });
+        ? await notionWrite({ token, apiBase: opts.apiBase(), fetchImpl: opts.fetchImpl, method: "PATCH", path: `/pages/${task.notionId}`, body: { properties: propertiesForTask(task, schema) }, label: label() })
+        : await notionWrite({ token, apiBase: opts.apiBase(), fetchImpl: opts.fetchImpl, method: "POST", path: "/pages", body: { parent: { database_id: databaseId }, properties: propertiesForTask(task, schema) }, label: label() });
       if (j.id) task.notionId = String(j.id).replace(/-/g, "");
       if (j.last_edited_time) task.notionEdited = j.last_edited_time;
       if (j.url) task.notionUrl = j.url;
@@ -476,7 +566,7 @@ export function createNotionSync(opts) {
     const token = opts.token();
     if (!token || !task || !task.notionId) return { error: "" };
     try {
-      await notionWrite({ token, apiBase: opts.apiBase(), fetchImpl: opts.fetchImpl, method: "PATCH", path: `/pages/${task.notionId}`, body: { archived: true } });
+      await notionWrite({ token, apiBase: opts.apiBase(), fetchImpl: opts.fetchImpl, method: "PATCH", path: `/pages/${task.notionId}`, body: { archived: true }, label: label() });
       return { error: "" };
     } catch (e) {
       return { error: e.message || String(e) };

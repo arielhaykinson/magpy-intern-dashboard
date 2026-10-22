@@ -1,5 +1,5 @@
 const crypto = require("crypto");
-const { getStore } = require("./kv");
+const { openStore } = require("./kv");
 const gauth = require("./gauth");
 
 const uid = () => "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -10,6 +10,38 @@ const seedTasks = () => {
     .map((s, i) => mk(...s.split("|"), i));
 };
 const emptyDb = () => ({ seeded: true, priorityMigrated: true, tasks: seedTasks(), hours: {}, tombstones: {}, meetings: [], asks: [], comments: {}, activity: [] });
+const emptyPrivates = () => ({ seeded: true, priorityMigrated: true, tasks: [], hours: {}, tombstones: {}, meetings: [], asks: [], comments: {}, activity: [] });
+const PRIVATES_DATABASE_ID = "c7832a86522a4e26ae7311d9662c460b";
+const normId = (id) => String(id || "").replace(/-/g, "").trim().toLowerCase();
+function privatesDatabaseId() {
+  const id = normId(process.env.PRIVATES_NOTION_DATABASE_ID || PRIVATES_DATABASE_ID);
+  if (!id || id === "057cf17c94bb4acf988f926775660ab8" || id === "67b0ae62643246289339316b82f2a13e") return "";
+  return id;
+}
+const magpyBoard = {
+  name: "magpy",
+  key: () => process.env.MAGPY_KEY || "magpy:state",
+  file: "state.json",
+  label: "Solavant Interns · Tasks",
+  databaseId: () => process.env.NOTION_DATABASE_ID || "",
+  configured: () => !!(process.env.NOTION_TOKEN || "").trim(),
+  empty: emptyDb,
+};
+const privatesBoard = {
+  name: "privates",
+  key: () => "privates:state",
+  file: "privates-state.json",
+  label: "Solavant Private · Tasks",
+  databaseId: () => privatesDatabaseId(),
+  configured: () => !!(process.env.NOTION_TOKEN || "").trim() && !!privatesDatabaseId(),
+  empty: emptyPrivates,
+  dropLocalWithoutPages: true,
+  resolve: (raw) => {
+    const id = normId(raw);
+    if (!id || id === "057cf17c94bb4acf988f926775660ab8" || id === "67b0ae62643246289339316b82f2a13e") return { databaseId: "", warning: "" };
+    return { databaseId: id, warning: "" };
+  },
+};
 const PRIS = ["Urgent", "High", "Medium", "Low"];
 const normPri = (v) => PRIS.find((p) => p.toLowerCase() === String(v ?? "").trim().toLowerCase()) || "Low";
 function normalize(db) {
@@ -17,7 +49,6 @@ function normalize(db) {
   for (const t of db.tasks) t.priority = normPri(t.priority);
   return db;
 }
-const notionConfigured = () => !!(process.env.NOTION_TOKEN || "").trim();
 const notionReady = import("../../notion-sync.mjs");
 function notionFresh(db) {
   const meta = (db && db.notion) || {};
@@ -26,8 +57,8 @@ function notionFresh(db) {
   const wait = meta.error ? Math.min(syncMs, 10000) : syncMs;
   return !!(meta.syncedAt && Date.now() - meta.syncedAt < wait);
 }
-function notionView(db) {
-  const configured = notionConfigured(), n = (db && db.notion) || {};
+function notionView(db, board = magpyBoard) {
+  const configured = board.configured(), n = (db && db.notion) || {};
   return {
     configured, ok: configured && !n.error, databaseId: configured ? (n.databaseId || "") : "",
     syncedAt: n.syncedAt || 0, error: configured ? (n.error || "") : "", warning: configured ? (n.warning || "") : "",
@@ -35,17 +66,23 @@ function notionView(db) {
     droppedLocal: configured ? (n.droppedLocal || []) : [],
   };
 }
-function shownTasks(db) {
+function shownTasks(db, board = magpyBoard) {
   const tasks = (db && db.tasks) || [];
-  if (!notionConfigured()) return tasks;
+  if (!board.configured()) return tasks;
   return tasks.filter((t) => t && (t.notionId || t.localDirty));
 }
-async function notionSyncFor(db) {
+async function notionSyncFor(db, board = magpyBoard) {
   const m = await notionReady;
   if (!db.notion) db.notion = m.blankNotionMeta();
   return m.createNotionSync({
     token: () => process.env.NOTION_TOKEN || "",
-    databaseId: () => process.env.NOTION_DATABASE_ID || "",
+    databaseId: () => board.databaseId(),
+    label: board.label,
+    schema: () => (board.name === "privates" ? m.PRIVATES_SCHEMA : null),
+    resolve: board.resolve,
+    dropLocalWithoutPages: !!board.dropLocalWithoutPages,
+    clearWhenUnreadable: board.name === "privates",
+    loadSchema: board.name === "privates",
     syncMs: () => process.env.NOTION_SYNC_MS,
     apiBase: () => process.env.NOTION_API_BASE || "",
     getState: () => db,
@@ -53,11 +90,11 @@ async function notionSyncFor(db) {
       db.tasks = next.tasks; db.tombstones = next.tombstones; db.notion = next.notion;
       if (info && info.tasksChanged) {
         const n = (next.tasks || []).filter((t) => t.notionId).length;
-        log(db, "Notion", "sync", null, `synced ${n} tasks from Solavant Interns · Tasks`);
+        log(db, "Notion", "sync", null, `synced ${n} tasks from ${board.label}`);
         const dropped = (info && info.dropped) || [];
         if (dropped.length) {
           const names = dropped.join(", ");
-          log(db, "Notion", "sync", null, names.length > 150 ? `removed ${dropped.length} local-only tasks that are not on Solavant Interns · Tasks` : `removed local-only tasks not on Solavant Interns · Tasks: ${names}`);
+          log(db, "Notion", "sync", null, names.length > 150 ? `removed ${dropped.length} local-only tasks that are not on ${board.label}` : `removed local-only tasks not on ${board.label}: ${names}`);
         }
       }
     },
@@ -65,32 +102,37 @@ async function notionSyncFor(db) {
 }
 // Serverless has no long-lived poll. Freshness is the syncedAt stored with the document,
 // so every instance waits the same interval, and Refresh Notion forces a pull.
-async function readWithNotion(force) {
-  if (!notionConfigured()) return readState();
-  const s = getStore();
+async function readWithNotion(force, board = magpyBoard) {
+  if (!board.configured()) return readState(board);
+  const s = openStore(board.key(), board.file);
   for (let i = 0; i < 6; i++) {
-    const { rev, db } = await readState();
+    const { rev, db } = await readState(board);
     if (!force && notionFresh(db) && !((db.tasks || []).some((t) => t && !t.notionId && !t.localDirty))) return { rev, db };
-    await (await notionSyncFor(db)).refresh(true);
+    await (await notionSyncFor(db, board)).refresh(true);
     if (await s.cas(rev, db)) return { rev: rev + 1, db };
   }
   throw new Error("could not save Notion sync");
 }
-const view = (db, rev) => ({ rev, tasks: shownTasks(db), meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])), notion: notionView(db) });
+function view(db, rev, board = magpyBoard) {
+  const notion = notionView(db, board);
+  let tasks = shownTasks(db, board);
+  if (board.name === "privates" && notion.configured && notion.error) tasks = tasks.filter((t) => t && t.localDirty);
+  return { rev, tasks, meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])), notion };
+}
 
-async function readState() {
-  const s = getStore();
+async function readState(board = magpyBoard) {
+  const s = openStore(board.key(), board.file);
   for (let i = 0; i < 6; i++) {
     const cur = await s.read();
     if (cur.db) return { rev: cur.rev, db: normalize(cur.db) };
-    await s.cas(cur.rev, emptyDb()); // lost race = someone else seeded; re-read
+    await s.cas(cur.rev, board.empty()); // lost race = someone else seeded; re-read
   }
   throw new Error("could not initialise store");
 }
-async function mutate(fn) {
-  const s = getStore();
+async function mutate(fn, board = magpyBoard) {
+  const s = openStore(board.key(), board.file);
   for (let i = 0; i < 12; i++) {
-    const { rev, db } = await readState();
+    const { rev, db } = await readState(board);
     const r = await fn(db);
     if (!r.write) return r;
     if (await s.cas(rev, db)) return r;
@@ -207,22 +249,25 @@ async function handler(req, res) {
     if (!p.startsWith("/api/")) return send(res, 404, { error: "not found" });
     if (pw && !hasSession(req)) return send(res, 401, { error: "login required" });
 
-    if (p === "/api/events") return send(res, 410, { error: "SSE not available on Vercel; poll /api/data?since=<rev>" });
-    if (p === "/api/data" && M === "GET") {
+    const board = p.startsWith("/api/privates/") || p === "/api/privates" ? privatesBoard : magpyBoard;
+    const route = board.name === "privates" ? "/api" + p.slice("/api/privates".length) : p;
+
+    if (route === "/api/events") return send(res, 410, { error: "SSE not available on Vercel; poll /api/data?since=<rev>" });
+    if (route === "/api/data" && M === "GET") {
       const since = url.searchParams.get("since");
       if (since !== null && since !== "") {
-        const cur = await readState();
-        if (+since === cur.rev && (!notionConfigured() || notionFresh(cur.db))) return send(res, 200, { rev: cur.rev, unchanged: true });
+        const cur = await readState(board);
+        if (+since === cur.rev && (!board.configured() || notionFresh(cur.db))) return send(res, 200, { rev: cur.rev, unchanged: true });
       }
-      const { rev, db } = await readWithNotion(false);
+      const { rev, db } = await readWithNotion(false, board);
       if (since !== null && since !== "" && +since === rev) return send(res, 200, { rev, unchanged: true });
-      return send(res, 200, view(db, rev));
+      return send(res, 200, view(db, rev, board));
     }
-    if (p === "/api/notion/refresh" && M === "POST") {
-      const { db } = await readWithNotion(true);
-      return send(res, 200, notionView(db));
+    if (route === "/api/notion/refresh" && M === "POST") {
+      const { db } = await readWithNotion(true, board);
+      return send(res, 200, notionView(db, board));
     }
-    if (p === "/api/task" && M === "PUT") {
+    if (route === "/api/task" && M === "PUT") {
       const t = await readBody(req); if (!t.id || typeof t.title !== "string") return send(res, 400, { error: "bad task" });
       t.updatedAt = +t.updatedAt || Date.now();
       return reply(res, await mutate(async (db) => {
@@ -233,16 +278,16 @@ async function handler(req, res) {
         if (cur && cur.notionId) { nt.notionId = cur.notionId; nt.notionEdited = cur.notionEdited; nt.notionUrl = cur.notionUrl || ""; }
         logTaskChange(db, by, cur, nt); logDocs(db, by, cur, nt); i >= 0 ? (db.tasks[i] = nt) : db.tasks.push(nt); delete db.tombstones[t.id];
         let notionError = "";
-        if (notionConfigured()) notionError = (await (await notionSyncFor(db)).pushTask(nt)).error || "";
+        if (board.configured()) notionError = (await (await notionSyncFor(db, board)).pushTask(nt)).error || "";
         return { code: 200, body: { applied: true, task: nt, notionError }, write: true };
-      }));
+      }, board));
     }
-    if (p.startsWith("/api/task/") && M === "DELETE" && !p.endsWith("/comments")) {
-      const id = decodeURIComponent(p.slice(10)), at = +url.searchParams.get("updatedAt") || Date.now();
-      if (notionConfigured()) {
-        const cur = (await readState()).db.tasks.find((x) => x.id === id);
+    if (route.startsWith("/api/task/") && M === "DELETE" && !route.endsWith("/comments")) {
+      const id = decodeURIComponent(route.slice(10)), at = +url.searchParams.get("updatedAt") || Date.now();
+      if (board.configured()) {
+        const cur = (await readState(board)).db.tasks.find((x) => x.id === id);
         if (cur && cur.notionId && !(cur.updatedAt > at)) {
-          const archived = await (await notionSyncFor((await readState()).db)).archiveTask(cur);
+          const archived = await (await notionSyncFor((await readState(board)).db, board)).archiveTask(cur);
           if (archived.error) return send(res, 502, { error: archived.error });
         }
       }
@@ -252,9 +297,9 @@ async function handler(req, res) {
         if (cur) log(db, by, "deleted", cur, "deleted this task");
         db.tasks = db.tasks.filter((x) => x.id !== id); delete db.comments[id]; db.tombstones[id] = at;
         return { code: 200, body: { applied: true }, write: true };
-      }));
+      }, board));
     }
-    const cm = p.match(/^\/api\/task\/([^/]+)\/comments$/);
+    const cm = route.match(/^\/api\/task\/([^/]+)\/comments$/);
     if (cm && M === "POST") {
       const id = decodeURIComponent(cm[1]), b = await readBody(req), text = typeof b.text === "string" ? b.text.trim() : "";
       if (!text) return send(res, 400, { error: "text required" }); if (text.length > 2000) return send(res, 400, { error: "comment too long (max 2000)" });
@@ -263,33 +308,33 @@ async function handler(req, res) {
         const c = { id: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), author: String(b.author || by || "Someone").slice(0, 40), text, at: new Date().toISOString() };
         (db.comments[id] ||= []).push(c); log(db, c.author, "comment", task, "commented: " + (text.length > 90 ? text.slice(0, 90) + "…" : text));
         return { code: 201, body: { comment: c }, write: true };
-      }));
+      }, board));
     }
-    if (p === "/api/hours" && M === "PUT") {
+    if (route === "/api/hours" && M === "PUT") {
       const { key, value, updatedAt } = await readBody(req), at = +updatedAt || Date.now();
       if (!key || !isFinite(+value)) return send(res, 400, { error: "bad hours" });
       return reply(res, await mutate((db) => {
         if (db.hours[key] && db.hours[key].updatedAt > at) return { code: 200, body: { applied: false } };
         db.hours[key] = { value: +value, updatedAt: at }; return { code: 200, body: { applied: true }, write: true };
-      }));
+      }, board));
     }
-    if (p === "/api/meetings" && M === "GET") return send(res, 200, { meetings: (await readState()).db.meetings });
-    if (p === "/api/meetings" && M === "POST") {
+    if (route === "/api/meetings" && M === "GET") return send(res, 200, { meetings: (await readState(board)).db.meetings });
+    if (route === "/api/meetings" && M === "POST") {
       const b = await readBody(req);
       return reply(res, await mutate((db) => {
         const r = cleanMeeting(b, null, by); if (r.error) return { code: 400, body: r };
         db.meetings.push(touch(r.m)); log(db, by || r.m.createdBy, "meeting", { id: "", title: r.m.title }, "requested a meeting on " + r.m.start.slice(0, 10));
         return { code: 201, body: { meeting: r.m }, write: true };
-      }));
+      }, board));
     }
-    if (p === "/api/meetings/pending" && M === "GET") {
-      const inc = url.searchParams.get("include") === "cancelled", { db } = await readState();
+    if (route === "/api/meetings/pending" && M === "GET") {
+      const inc = url.searchParams.get("include") === "cancelled", { db } = await readState(board);
       return send(res, 200, { meetings: db.meetings.filter((m) => m.status === "requested" || (inc && m.status === "cancelled" && m.googleEventId)) });
     }
-    const mm = p.match(/^\/api\/meetings\/([^/]+)(\/synced)?$/);
+    const mm = route.match(/^\/api\/meetings\/([^/]+)(\/synced)?$/);
     if (mm) {
       const id = decodeURIComponent(mm[1]), synced = !!mm[2];
-      if (!synced && M === "GET") { const cur = (await readState()).db.meetings.find((x) => x.id === id); return cur ? send(res, 200, { meeting: cur }) : send(res, 404, { error: "no such meeting" }); }
+      if (!synced && M === "GET") { const cur = (await readState(board)).db.meetings.find((x) => x.id === id); return cur ? send(res, 200, { meeting: cur }) : send(res, 404, { error: "no such meeting" }); }
       const b = M === "DELETE" ? {} : await readBody(req), hard = url.searchParams.get("hard") === "1";
       if ((synced && M === "POST") || (!synced && (M === "PUT" || M === "DELETE")))
         return reply(res, await mutate((db) => {
@@ -308,33 +353,33 @@ async function handler(req, res) {
           }
           if (hard) db.meetings.splice(i, 1); else { cur.status = "cancelled"; touch(cur); }
           return { code: 200, body: { ok: true, meeting: hard ? null : cur }, write: true };
-        }));
+        }, board));
     }
-    if (p === "/api/asks" && M === "GET") return send(res, 200, { asks: (await readState()).db.asks });
-    if (p === "/api/asks" && M === "POST") {
+    if (route === "/api/asks" && M === "GET") return send(res, 200, { asks: (await readState(board)).db.asks });
+    if (route === "/api/asks" && M === "POST") {
       const b = await readBody(req), text = typeof b.text === "string" ? b.text.trim() : "";
       if (!text) return send(res, 400, { error: "text required" }); if (text.length > 2000) return send(res, 400, { error: "text too long (max 2000)" });
       return reply(res, await mutate((db) => {
         const a = { id: aid(), text, createdBy: String(b.createdBy || by || "").slice(0, 40), createdAt: new Date().toISOString(), status: "new", reply: null, repliedAt: null };
         db.asks.push(a); return { code: 201, body: { ask: a }, write: true };
-      }));
+      }, board));
     }
-    if (p === "/api/asks/pending" && M === "GET") return send(res, 200, { asks: (await readState()).db.asks.filter((a) => a.status === "new") });
-    const am = p.match(/^\/api\/asks\/([^/]+)\/reply$/);
+    if (route === "/api/asks/pending" && M === "GET") return send(res, 200, { asks: (await readState(board)).db.asks.filter((a) => a.status === "new") });
+    const am = route.match(/^\/api\/asks\/([^/]+)\/reply$/);
     if (am && M === "POST") {
       const id = decodeURIComponent(am[1]), b = await readBody(req);
       return reply(res, await mutate((db) => {
         const a = db.asks.find((x) => x.id === id); if (!a) return { code: 404, body: { error: "no such ask" } };
         if (typeof b.reply !== "string" || !b.reply.trim()) return { code: 400, body: { error: "reply required" } };
         a.reply = b.reply.trim(); a.status = "handled"; a.repliedAt = new Date().toISOString(); return { code: 200, body: { ask: a }, write: true };
-      }));
+      }, board));
     }
-    if (p === "/api/reset" && M === "POST") {
+    if (route === "/api/reset" && M === "POST") {
       const r = await mutate((db) => {
-        const f = emptyDb(); f.asks = db.asks; Object.keys(db).forEach((k) => delete db[k]); Object.assign(db, f);
+        const f = board.empty(); f.asks = db.asks; Object.keys(db).forEach((k) => delete db[k]); Object.assign(db, f);
         return { code: 200, body: { ok: true }, write: true };
-      });
-      if (r.code === 200 && notionConfigured()) await readWithNotion(true);
+      }, board);
+      if (r.code === 200 && board.configured()) await readWithNotion(true, board);
       return reply(res, r);
     }
     return send(res, 404, { error: "not found" });

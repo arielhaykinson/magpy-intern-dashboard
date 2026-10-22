@@ -3,10 +3,10 @@
 //   cas(rev, db)      -> true if written (stored rev becomes rev+1), false on conflict
 const fs = require("fs"), path = require("path");
 
-const KEY = process.env.MAGPY_KEY || "magpy:state", REVKEY = KEY + ":rev";
 const LUA = "local c=tonumber(redis.call('GET',KEYS[2]) or '0'); if c ~= tonumber(ARGV[1]) then return 0 end; redis.call('SET',KEYS[1],ARGV[2]); redis.call('SET',KEYS[2],tostring(c+1)); return 1";
 
-function upstash(url, token) {
+function upstash(url, token, key) {
+  const KEY = key || process.env.MAGPY_KEY || "magpy:state", REVKEY = KEY + ":rev";
   url = url.replace(/\/+$/, "");
   const cmd = async (args) => {
     const r = await fetch(url, { method: "POST", headers: { authorization: "Bearer " + token, "content-type": "application/json" }, body: JSON.stringify(args) });
@@ -21,8 +21,8 @@ function upstash(url, token) {
   };
 }
 
-function file(dir) {
-  const f = path.join(dir, "state.json");
+function file(dir, fileName) {
+  const f = path.join(dir, fileName || "state.json");
   fs.mkdirSync(dir, { recursive: true });
   const load = () => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return { rev: 0, db: null }; } };
   return {
@@ -50,13 +50,18 @@ function memory() {
   };
 }
 
-let inst;
-function getStore() {
-  if (inst) return inst;
+const pools = new Map();
+function openStore(key, fileName) {
+  const id = (key || "magpy:state") + "\n" + (fileName || "state.json");
+  if (pools.has(id)) return pools.get(id);
   const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL, token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
-  if (url && token) inst = upstash(url, token);
-  else if (process.env.VERCEL && !process.env.MAGPY_ALLOW_FILE) inst = memory();
-  else inst = file(process.env.DATA_DIR || path.join(__dirname, "..", ".data"));
+  const inst = url && token ? upstash(url, token, key || "magpy:state")
+    : process.env.VERCEL && !process.env.MAGPY_ALLOW_FILE ? memory()
+    : file(process.env.DATA_DIR || path.join(__dirname, "..", ".data"), fileName || "state.json");
+  pools.set(id, inst);
   return inst;
 }
-module.exports = { getStore, upstash, file };
+function getStore() {
+  return openStore(process.env.MAGPY_KEY || "magpy:state", "state.json");
+}
+module.exports = { getStore, openStore, upstash, file };
