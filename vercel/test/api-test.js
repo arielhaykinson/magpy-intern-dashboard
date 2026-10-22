@@ -1,6 +1,7 @@
 const assert = require("assert"), fs = require("fs"), http = require("http"), os = require("os"), path = require("path");
 async function suite(label, setup) {
   delete process.env.NOTION_TOKEN; delete process.env.NOTION_API_BASE; delete process.env.VERCEL;
+  delete process.env.GOOGLE_CLIENT_ID; delete process.env.GOOGLE_CLIENT_SECRET; delete process.env.ALLOWED_EMAILS; delete process.env.PUBLIC_URL; delete process.env.SYNC_KEY;
   const cleanup = await setup();
   delete require.cache[require.resolve("./harness.js")]; delete require.cache[require.resolve("../lib/kv")]; delete require.cache[require.resolve("../lib/app")]; delete require.cache[require.resolve("../api/[...path].js")];
   const h = require("./harness.js").create(); await new Promise((r) => h.listen(0, r)); const base = "http://localhost:" + h.address().port;
@@ -114,6 +115,107 @@ async function notionSuite() {
   delete process.env.NOTION_TOKEN; delete process.env.NOTION_API_BASE;
   console.log("PASS notion sync");
 }
+function portalFiles() {
+  const crypto = require("crypto");
+  const root = path.join(__dirname, "..", "..");
+  const expect = {
+    "portal/index.html": "dd5cb1f11d2b5dae0023211756d0196aa29c6475",
+    "portal/login.html": "a63f4407a0f650e7979b1676f5522e21ea5e9f2f",
+    "portal/magpy/index.html": "484b2e477740123f02df72916cb297c22793c6e9",
+    "portal/solavant-logo.jpg": "1c2d9013c9b9c81d280c560dcc73e1e9c90fd313",
+    "middleware.js": "468c293be7fdda85aea19abcf47f0a4b98883a66",
+    "vercel/lib/gauth.js": "28ca20bca73cfe95fa0934597653a92f435fd276",
+  };
+  for (const [rel, sha] of Object.entries(expect)) {
+    const buf = fs.readFileSync(path.join(root, rel));
+    assert.equal(crypto.createHash("sha1").update(buf).digest("hex"), sha, rel);
+  }
+  assert.match(fs.readFileSync(path.join(root, "portal/index.html"), "utf8"), /href="\/magpy\/"/);
+  assert.match(fs.readFileSync(path.join(root, "portal/login.html"), "utf8"), /Sign in with Google/);
+  assert.match(fs.readFileSync(path.join(root, "middleware.js"), "utf8"), /solavant_session/);
+  require(path.join(__dirname, "..", "copy-public.js"));
+  const built = path.join(root, "public");
+  assert.match(fs.readFileSync(path.join(built, "index.html"), "utf8"), /Our home base/);
+  assert.match(fs.readFileSync(path.join(built, "magpy/index.html"), "utf8"), /Solavant home/);
+  assert.match(fs.readFileSync(path.join(built, "app.js"), "utf8"), /refreshNotion/);
+  assert.match(fs.readFileSync(path.join(built, "login.html"), "utf8"), /\/api\/auth\/login/);
+  console.log("PASS portal files");
+}
+function b64urlJson(o) { return Buffer.from(JSON.stringify(o)).toString("base64url"); }
+async function googleSuite() {
+  delete process.env.NOTION_TOKEN; delete process.env.NOTION_API_BASE; delete process.env.VERCEL;
+  delete process.env.KV_REST_API_URL; delete process.env.KV_REST_API_TOKEN; delete process.env.UPSTASH_REDIS_REST_URL; delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  delete process.env.APP_PASSWORD; delete process.env.PUBLIC_URL;
+  process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "magpy-google-"));
+  process.env.GOOGLE_CLIENT_ID = "cid.apps.googleusercontent.com";
+  process.env.GOOGLE_CLIENT_SECRET = "test-secret";
+  process.env.SESSION_SECRET = "google-session-secret-32bytes-min";
+  process.env.ALLOWED_EMAILS = "ariel@solavant.com @solavant.com";
+  for (const k of Object.keys(require.cache)) if (k.includes("/vercel/")) delete require.cache[k];
+  const gauth = require("../lib/gauth");
+  const h = require("./harness.js").create(); await new Promise((r) => h.listen(0, r));
+  const base = "http://localhost:" + h.address().port;
+  const call = async (m, u, hdr = {}) => {
+    const r = await fetch(base + u, { method: m, redirect: "manual", headers: hdr });
+    const text = await r.text();
+    let j = null; try { j = JSON.parse(text); } catch {}
+    return { s: r.status, j, text, r };
+  };
+  const me = await call("GET", "/api/auth/me");
+  assert.equal(me.s, 200); assert.equal(me.j.enabled, true); assert.equal(me.j.user, null);
+  assert.equal((await call("GET", "/api/data")).s, 401);
+  const login = await call("GET", "/api/auth/login?next=/magpy/");
+  assert.equal(login.s, 302);
+  const loc = login.r.headers.get("location");
+  assert.match(loc, /^https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth\?/);
+  const q = new URL(loc).searchParams;
+  assert.equal(q.get("client_id"), process.env.GOOGLE_CLIENT_ID);
+  assert.equal(q.get("redirect_uri"), base + "/api/auth/callback");
+  assert.equal(q.get("scope"), "openid email profile");
+  const rawState = login.r.headers.getSetCookie().find((c) => c.startsWith("solavant_oauth="));
+  const stateTok = decodeURIComponent(rawState.split(";")[0].slice("solavant_oauth=".length));
+  const st = gauth.readToken(stateTok, process.env.SESSION_SECRET);
+  assert.equal(st.next, "/magpy/");
+  const idFor = (email) => "x." + b64urlJson({ iss: "https://accounts.google.com", aud: process.env.GOOGLE_CLIENT_ID, exp: Math.floor(Date.now() / 1000) + 3600, email, email_verified: true }) + ".y";
+  const orig = globalThis.fetch;
+  globalThis.fetch = (url, opts) => String(url).startsWith("https://oauth2.googleapis.com/")
+    ? Promise.resolve(new Response(JSON.stringify({ id_token: idFor("ariel@solavant.com") }), { status: 200, headers: { "content-type": "application/json" } }))
+    : orig(url, opts);
+  try {
+    const cb = await call("GET", "/api/auth/callback?code=abc&state=" + encodeURIComponent(st.n), { cookie: "solavant_oauth=" + encodeURIComponent(stateTok) });
+    assert.equal(cb.s, 302); assert.equal(cb.r.headers.get("location"), "/magpy/");
+    const sess = cb.r.headers.getSetCookie().find((c) => c.startsWith("solavant_session="));
+    assert.match(sess, /HttpOnly/);
+    const sessVal = sess.split(";")[0];
+    assert.equal((await call("GET", "/api/data", { cookie: sessVal })).s, 200);
+    assert.equal((await call("GET", "/api/session", { cookie: sessVal })).j.user.email, "ariel@solavant.com");
+    const out = await call("GET", "/api/auth/logout", { cookie: sessVal });
+    assert.equal(out.s, 302); assert.match(out.r.headers.get("location"), /signedout=1/);
+  } finally { globalThis.fetch = orig; }
+  globalThis.fetch = (url, opts) => String(url).startsWith("https://oauth2.googleapis.com/")
+    ? Promise.resolve(new Response(JSON.stringify({ id_token: idFor("stranger@example.com") }), { status: 200 }))
+    : orig(url, opts);
+  try {
+    const bad = await call("GET", "/api/auth/callback?code=abc&state=" + encodeURIComponent(st.n), { cookie: "solavant_oauth=" + encodeURIComponent(stateTok) });
+    assert.equal(bad.s, 302); assert.match(bad.r.headers.get("location"), /error=notallowed/);
+  } finally { globalThis.fetch = orig; }
+  process.env.SYNC_KEY = "sync-key-0123456789abcdef0123456789";
+  assert.equal((await call("GET", "/api/data", { authorization: "Bearer " + process.env.SYNC_KEY })).s, 200);
+  const { pathToFileURL } = require("url");
+  const mw = await import(pathToFileURL(path.join(__dirname, "..", "..", "middleware.js")).href);
+  const anon = await mw.default({ url: "https://dash.example/", headers: { get: () => null } });
+  assert.equal(anon.status, 302); assert.match(anon.headers.get("location"), /\/login\.html\?next=%2F$/);
+  const apiAnon = await mw.default({ url: "https://dash.example/api/data", headers: { get: (n) => n === "authorization" ? null : null } });
+  assert.equal(apiAnon.status, 401);
+  const tok = gauth.makeToken({ e: "ariel@solavant.com", exp: Math.floor(Date.now() / 1000) + 60 }, process.env.SESSION_SECRET);
+  const okMw = await mw.default({ url: "https://dash.example/magpy/", headers: { get: (n) => n === "cookie" ? "solavant_session=" + encodeURIComponent(tok) : null } });
+  assert.equal(okMw, undefined);
+  delete process.env.GOOGLE_CLIENT_ID;
+  assert.equal(await mw.default({ url: "https://dash.example/", headers: { get: () => null } }), undefined);
+  delete process.env.GOOGLE_CLIENT_SECRET; delete process.env.SESSION_SECRET; delete process.env.ALLOWED_EMAILS; delete process.env.SYNC_KEY;
+  h.close();
+  console.log("PASS google sign-in");
+}
 (async () => {
   await suite("file store", async () => { process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "magpy-")); delete process.env.UPSTASH_REDIS_REST_URL; delete process.env.KV_REST_API_URL; delete process.env.UPSTASH_REDIS_REST_TOKEN; delete process.env.KV_REST_API_TOKEN; });
   const fu = require("./fake-upstash").create(); await new Promise((r) => fu.srv.listen(0, r));
@@ -121,4 +223,6 @@ async function notionSuite() {
   assert(fu.kv.get("magpy:state")); console.log("upstash calls:", fu.calls()); fu.srv.close();
   await suite("vercel memory (no redis)", async () => { process.env.VERCEL = "1"; delete process.env.UPSTASH_REDIS_REST_URL; delete process.env.KV_REST_API_URL; delete process.env.UPSTASH_REDIS_REST_TOKEN; delete process.env.KV_REST_API_TOKEN; delete process.env.MAGPY_ALLOW_FILE; });
   await notionSuite();
+  portalFiles();
+  await googleSuite();
 })().catch((e) => { console.error("FAIL", e); process.exit(1); });
