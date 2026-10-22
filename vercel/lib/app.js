@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const { getStore } = require("./kv");
+const gauth = require("./gauth");
 
 const uid = () => "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const seedTasks = () => {
@@ -172,7 +173,13 @@ const reply = (res, r) => send(res, r.code, r.body);
 async function handler(req, res) {
   try {
     const url = new URL(req.url, "http://x"), p = url.pathname.replace(/\/+$/, "") || "/", by = String(req.headers["x-user"] || ""), M = req.method;
-    const { pw } = cfg();
+    if (await gauth.handleAuth(req, res, p, url)) return;
+    // Google sign-in (when configured) replaces the password gate for every other /api route.
+    if (gauth.enabled()) {
+      if (p === "/api/session" && M === "GET") { const u = gauth.sessionUser(req); return send(res, 200, { required: true, google: true, ok: !!u, user: u }); }
+      if (!gauth.sessionUser(req) && !gauth.syncKeyOk(req)) return send(res, 401, { error: "login required", login: "/login.html" });
+    }
+    const { pw } = gauth.enabled() ? { pw: "" } : cfg();
     if (p === "/api/session" && M === "GET") return send(res, 200, { required: !!pw, ok: !pw || hasSession(req) });
     if (p === "/api/login" && M === "POST") {
       if (!pw) return send(res, 200, { ok: true, required: false });

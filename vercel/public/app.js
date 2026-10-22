@@ -6,7 +6,7 @@ const I = (p, c = "ic") => `<svg class="${c}" viewBox="0 0 16 16" aria-hidden="t
 const ICONS = { caret: '<path d="M4.5 6.5 8 10l3.5-3.5"/>', prev: '<path d="M9.5 4 5.5 8l4 4"/>', next: '<path d="M6.5 4l4 4-4 4"/>', cal: '<rect x="2.5" y="3.5" width="11" height="10" rx="2"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/>', clock: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/>', inbox: '<path d="M2.5 9.5 4 4a1.5 1.5 0 0 1 1.4-1h5.2A1.5 1.5 0 0 1 12 4l1.5 5.5v2a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M2.5 9.5h3l.8 1.5h3.4l.8-1.5h3"/>', list: '<path d="M3 4.5h10M3 8h10M3 11.5h6"/>', board: '<rect x="2.5" y="3" width="4" height="10" rx="1.2"/><rect x="9.5" y="3" width="4" height="6" rx="1.2"/>' };
 const $ = (s) => document.querySelector(s);
 const FINE = matchMedia("(pointer:fine)").matches;
-let authRequired = false, data = { tasks: [], hours: {}, meetings: [], asks: [], comments: {}, activity: [] }, tab = "tasks", ownerF = "", selDay = "", demo = false;
+let authRequired = false, googleAuth = false, data = { tasks: [], hours: {}, meetings: [], asks: [], comments: {}, activity: [] }, tab = "tasks", ownerF = "", selDay = "", demo = false;
 const closed = new Set(); const today = new Date(); const iso = (d) => d.toLocaleDateString("en-CA");
 const TODAY = iso(today); let cur = new Date(today.getFullYear(), today.getMonth(), 1);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -195,7 +195,12 @@ function setupSync() {
     } catch (e) { notionNote = "Notion refresh failed"; }
     b.disabled = false; paint();
   };
-  if (authRequired) { const o = document.createElement("a"); o.href = "#"; o.id = "logout"; o.textContent = "Log out"; o.style.cssText = "color:inherit;margin-left:auto"; o.onclick = async (e) => { e.preventDefault(); await Store.logout(); location.reload(); }; box.appendChild(o); }
+  if (authRequired) {
+    const o = document.createElement("a"); o.id = "logout"; o.textContent = "Log out"; o.style.cssText = "color:inherit;margin-left:auto";
+    if (googleAuth) o.href = "/api/auth/logout";
+    else { o.href = "#"; o.onclick = async (e) => { e.preventDefault(); await Store.logout(); location.reload(); }; }
+    box.appendChild(o);
+  }
   paint(); if (demo) return;
   let busy = false, again = false;
   Store.subscribe(async (ev) => {
@@ -264,7 +269,11 @@ function setupMeetings() {
 async function init() {
   setupLogin();
   readHash();
-  if (!demo) { const ses = await Store.session(); authRequired = !!ses.required; if (ses.required && !ses.ok) showLogin(); }
+  if (!demo) {
+    const ses = await Store.session(); authRequired = !!ses.required; googleAuth = !!ses.google;
+    if (ses.google && !ses.ok) { location.href = "/login.html?next=" + encodeURIComponent(location.pathname + location.search); return; }
+    if (ses.required && !ses.ok) showLogin();
+  }
   setupMeetings();
   readHash(); setupSync();
   greet();
@@ -374,7 +383,12 @@ async function sendAsk() {
 const loginOpen = () => !$("#login").hidden;
 function showLogin() { if (loginOpen()) return; $("#login").hidden = false; document.body.classList.add("locked"); $("#loginErr").textContent = ""; setTimeout(() => $("#loginPw").focus(), 30); }
 function setupLogin() {
-  window.addEventListener("magpy-auth", showLogin);
+  window.addEventListener("magpy-auth", () => {
+    fetch("/api/auth/me", { cache: "no-store" }).then((r) => r.json()).then((j) => {
+      if (j && j.enabled) location.href = "/login.html?next=" + encodeURIComponent(location.pathname + location.search);
+      else showLogin();
+    }).catch(() => showLogin());
+  });
   $("#loginForm").onsubmit = async (e) => {
     e.preventDefault(); const pw = $("#loginPw").value, err = $("#loginErr"), btn = e.target.querySelector("button"); if (!pw) { err.textContent = "Enter the password."; return; }
     btn.disabled = true; err.textContent = "";
