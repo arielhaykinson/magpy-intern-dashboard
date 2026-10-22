@@ -37,6 +37,7 @@ input::placeholder{color:#b0a99c}
 .chip:hover{background:#f0ebe2;color:var(--ink)}
 .chip.on{background:var(--accbg);color:var(--accd);font-weight:500}
 
+/* cards */
 .group,.upnext,#cal,#day,.col,.hp,.hhead{background:var(--card);border-radius:var(--r);box-shadow:var(--sh);border:1px solid #f2eee6}
 .group{margin-bottom:20px;padding:8px 22px 10px}
 .ghead{display:flex;align-items:baseline;gap:10px;padding:14px 0 8px;cursor:pointer}
@@ -52,7 +53,7 @@ input::placeholder{color:#b0a99c}
 .meta{display:flex;gap:14px;align-items:center;font-size:12px;color:var(--mut);white-space:nowrap}
 .own{display:inline-flex;align-items:center;gap:8px;min-width:84px;color:var(--ink)}
 .av{width:24px;height:24px;border-radius:50%;display:inline-grid;place-content:center;font-style:normal;font-size:10px;font-weight:600;letter-spacing:.02em;background:#ece8df;color:#6f685c;flex:none}
-.av-Myles{background:#eadfd2;color:#7d5f43}.av-Ariel{background:#dde8df;color:#4d705e}.av-Can{background:#dfe6ec;color:#51697b}.av-Advay{background:#efe3d6;color:#6d5338}
+.av-Myles{background:#eadfd2;color:#7d5f43}.av-Ariel{background:#dde8df;color:#4d705e}.av-Can{background:#dfe6ec;color:#51697b}
 .pri,.status{display:inline-block;padding:1px 10px;border-radius:999px;font-size:11.5px;font-weight:500;line-height:20px;text-align:center}
 .pri.Urgent{background:#ecc9c0;color:#7d3123}.pri.High{background:#f6dfc9;color:#8c5420}.pri.Medium{background:#f3ecd2;color:#76652a}.pri.Low{background:#e5ede7;color:#4d6c5a}
 button.pri{border:0;cursor:pointer;font-family:inherit;transition:filter .15s,box-shadow .15s}button.pri:hover{filter:brightness(.97);box-shadow:0 0 0 2px rgba(107,143,124,.25)}
@@ -71,12 +72,14 @@ input.cb{appearance:none;width:18px!important;height:18px!important;border:1.5px
 .cb:checked{background:var(--acc);border-color:var(--acc)}
 .cb:checked::after{content:"";width:4px;height:8px;border:solid #fff;border-width:0 1.8px 1.8px 0;transform:rotate(45deg) translate(-1px,-1px)}
 .empty{padding:14px 0 16px;color:var(--mut);font-size:13px;font-style:italic}
+/* up next */
 .upnext{margin-bottom:26px;padding:8px 22px 10px;background:var(--accbg);border-color:#e1eadf}
 .uhead{display:flex;align-items:baseline;gap:14px;padding:14px 0 8px}
 .ornament{color:var(--mut);font-size:12.5px}
 .upnext .row:hover{background:rgba(255,255,255,.65)}
 .upnext .row+.row{box-shadow:0 -1px 0 #e1eadf}
 .upnext .cb{background:#fff}
+/* calendar */
 #cal{padding:22px}
 .chead{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
 .chead h3{font-family:var(--serif);font-size:24px;font-weight:500}
@@ -103,6 +106,7 @@ input.cb{appearance:none;width:18px!important;height:18px!important;border:1.5px
 .drow .t{flex:1}.drow.done .t{color:var(--mut);text-decoration:line-through}
 .nothing,.pick{color:var(--mut);padding:12px 0;font-style:italic}
 .dayadd{display:flex;gap:10px;margin-top:14px}.dayadd input{flex:1}
+/* board */
 .pane.wide{max-width:none}
 #board{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;align-items:start}
 .col{min-height:220px;padding:16px 14px 10px;background:#f4f0e8;box-shadow:none;border-color:transparent;transition:background .15s}
@@ -115,6 +119,7 @@ input.cb{appearance:none;width:18px!important;height:18px!important;border:1.5px
 .kcard .meta{gap:8px;justify-content:space-between;flex-wrap:wrap}
 .kcard .own{min-width:0}.kcard .oname{display:none}
 .kcard.drag{opacity:.4}
+/* hours */
 .hhead{display:flex;justify-content:space-between;align-items:baseline;padding:16px 22px;margin-bottom:16px}
 .hhead small,.hrow small{color:var(--mut);font-size:12px}
 .hp{padding:20px 22px;margin-bottom:14px}
@@ -123,6 +128,7 @@ input.cb{appearance:none;width:18px!important;height:18px!important;border:1.5px
 .hrow input{width:76px;text-align:right}
 .prog{height:8px;background:#f0ebe2;border-radius:999px;margin-top:16px;overflow:hidden}
 .prog i{display:block;height:100%;background:var(--acc);border-radius:999px;transition:width .3s}
+/* modal */
 dialog{border:0;border-radius:18px;padding:30px;width:500px;max-width:92vw;box-shadow:0 20px 50px rgba(60,48,30,.18);background:#fff;color:var(--ink)}
 dialog::backdrop{background:rgba(250,248,244,.75)}
 dialog h2{font-family:var(--serif);font-size:22px;margin-bottom:20px}
@@ -132,6 +138,7 @@ dialog label input,dialog label select,dialog label textarea{display:block;width
 .actions{display:flex;gap:8px;margin-top:8px}.actions span{flex:1}
 @media(max-width:700px){.app{padding:0 16px}.top{padding-top:32px}.meta .due,.meta .status,.oname{display:none}.own{min-width:0}#board{grid-template-columns:1fr}.cell{min-height:60px;padding:4px}.ev{display:none}.greet span{display:block;margin:2px 0 0;padding:0;border:0}}
 
+/* meetings */
 .mnote{margin:0 0 18px;color:var(--mut);font-size:13px;padding-left:12px;border-left:3px solid var(--acc)}
 .mcard,.mgroup{background:var(--card);border-radius:var(--r);box-shadow:var(--sh);border:1px solid #f2eee6}
 .mcard{padding:22px 26px 20px;margin-bottom:26px}
@@ -167,6 +174,7 @@ dialog label input,dialog label select,dialog label textarea{display:block;width
 .drow.mtgrow{cursor:pointer}.drow .tm{color:#4b6877;font-size:12px;min-width:64px}
 @media(max-width:700px){.grid3,.mopts{grid-template-columns:1fr}.mrow{grid-template-columns:48px 1fr}.mbtns{grid-column:2}.ev.mtg{display:none}}
 
+/* ask */
 .askcard{background:var(--card);border-radius:var(--r);box-shadow:var(--sh);border:1px solid #f2eee6;padding:20px 22px 18px}
 .thread{max-height:56vh;min-height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:18px;padding:4px 4px 8px}
 .ask{display:flex;flex-direction:column;gap:8px}
@@ -186,12 +194,14 @@ dialog label input,dialog label select,dialog label textarea{display:block;width
 .askform{display:flex;gap:10px;align-items:flex-end}
 .askform textarea{flex:1;resize:none;padding:11px 14px;border-radius:12px;max-height:120px;line-height:1.45}
 .askform button{padding:9px 20px}
+/* mobile tab bar: scrollable, hidden scrollbar */
 .tabs a{white-space:nowrap;flex:0 0 auto}
 @media(max-width:700px){.tabs{width:100%;max-width:100%;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}.tabs::-webkit-scrollbar{display:none}.tabs a{padding:7px 15px}html,body{overflow-x:hidden}}
 .quick input{min-width:0}.mcard input,.mcard select,.mcard textarea{box-sizing:border-box;max-width:100%}
 @media(max-width:700px){.quick{gap:8px}.quick select{max-width:110px}.mcard{padding:18px 18px 16px}}
 .tabs{position:relative}
 
+/* login */
 body.locked .app{display:none}
 .login{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px;z-index:50}
 .logincard{width:360px;max-width:100%;background:var(--card);border:1px solid #f2eee6;border-radius:18px;box-shadow:var(--sh);padding:38px 34px 30px;text-align:center}
@@ -202,6 +212,7 @@ body.locked .app{display:none}
 .logincard input{width:100%;padding:11px 14px;text-align:center}
 .logincard button{width:100%;margin-top:14px;padding:10px}
 .loginerr{min-height:20px;margin-top:10px;color:var(--terra);font-size:13px}
+/* comments */
 .cmts{margin:6px 0 16px;padding-top:16px;border-top:1px solid var(--line)}
 .cmts h3{font-family:var(--serif);font-size:16px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
 .cmtlist{max-height:190px;overflow:auto;display:flex;flex-direction:column;gap:12px;margin-bottom:12px}
@@ -210,6 +221,7 @@ body.locked .app{display:none}
 .cwho{display:flex;gap:8px;align-items:baseline;font-size:12.5px}.cwho small,.act small{color:var(--mut);font-size:11.5px}
 .cmtadd{display:flex;gap:8px}.cmtadd input{flex:1;min-width:0}
 .cmtlist .empty{padding:2px 0;color:var(--mut);font-size:13px}
+/* activity */
 .actlist{background:var(--card);border:1px solid #f2eee6;border-radius:var(--r);box-shadow:var(--sh);padding:6px 22px}
 .act{display:flex;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
 .act:last-child{border-bottom:0}.act.link{cursor:pointer}.act.link:hover .atask{color:var(--accd)}
@@ -237,6 +249,7 @@ a.btn:hover{border-color:#cfc8ba;background:#fcfbf8}
 .brand h1.logo-h{line-height:0}.logo{display:block;height:56px;width:auto}
 @media(max-width:700px){.logo{height:44px}}
 
+/* ===== mobile & touch polish (v18) ===== */
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 button,a,select,input,label{touch-action:manipulation;-webkit-tap-highlight-color:rgba(107,143,124,.18)}
 .app{padding-left:max(32px,env(safe-area-inset-left));padding-right:max(32px,env(safe-area-inset-right))}
@@ -275,6 +288,7 @@ body.mopen{overflow:hidden}
  input.cb:checked::before{background:var(--acc);border-color:var(--acc)}
  input.cb:checked::after{position:absolute;inset:0;margin:auto;width:6px;height:11px;transform:rotate(45deg) translate(-1px,-1px);border-width:0 2px 2px 0}
  .sub{margin-top:2px}
+ /* calendar */
  #cal{padding:16px 12px}.chead{margin-bottom:16px}.chead h3{font-size:21px}
  .nav{gap:8px}.nav button{padding:8px 14px;min-width:44px}
  .cgrid{gap:4px}.dow{padding:4px 0;text-align:center;font-size:10px;letter-spacing:.04em}
@@ -288,11 +302,13 @@ body.mopen{overflow:hidden}
  #day .phead{margin-bottom:6px}
  .drow{min-height:56px;padding:6px 10px;gap:8px}
  .dayadd{gap:10px;margin-top:18px}
+ /* board */
  #board{gap:20px}.col{padding:18px 16px 12px}
  .kcard{padding:16px;margin-bottom:14px;cursor:default}.kcard:hover{transform:none}
  .kcard b{margin-bottom:12px}
  .mv{display:flex;flex-direction:column;gap:4px;margin-top:14px;font-size:12px;color:var(--mut)}
  .mv select{width:100%;color:var(--ink)}
+ /* meetings */
  .mnote{margin-bottom:22px}
  .mcard{padding:22px 18px 20px;margin-bottom:32px}
  .mcard label{margin-bottom:18px;font-size:13px}.fl{font-size:13px;margin-bottom:10px}
@@ -304,15 +320,18 @@ body.mopen{overflow:hidden}
  .actions .primary{flex:1 1 140px}
  .mgroup{padding:10px 18px 14px;margin-bottom:26px}
  .mrow{padding:18px 0;gap:14px}.mbtns{gap:12px;margin-top:6px}.mbtns button{padding:8px 20px;font-size:14px}
+ /* ask */
  .askcard{padding:18px 16px 16px}
  .thread{max-height:50vh;max-height:50dvh;gap:22px}
  .bub{max-width:92%}
  .prompts{gap:10px}.pchip{font-size:14px;padding:8px 14px;min-height:44px}
  .askform{position:sticky;bottom:calc(8px + env(safe-area-inset-bottom));background:var(--card);padding-top:10px;gap:12px;scroll-margin-bottom:120px}
  .askform button{padding:8px 22px}
+ /* hours / activity */
  .hp{padding:22px 18px}.hhead{padding:18px}.hrow input{width:92px}
  .actlist{padding:6px 16px}.act{min-height:56px;padding:14px 0}
  .login input{font-size:16px}
+ /* modal: inset card with visible margin, tappable backdrop */
  dialog{width:calc(100vw - 32px);max-width:480px;max-height:calc(100dvh - 56px - env(safe-area-inset-top) - env(safe-area-inset-bottom));margin:auto;padding:0;overflow:hidden;border-radius:20px}
  dialog::backdrop{background:rgba(53,48,42,.38)}
  dialog[open]{display:flex;flex-direction:column}

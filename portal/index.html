@@ -1,0 +1,38 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Solavant</title><meta name="theme-color" content="#000000">
+<link rel="icon" type="image/jpeg" href="/solavant-logo.jpg">
+<style>
+@font-face{font-family:Inter;src:url(/fonts/inter.woff2) format("woff2");font-weight:100 900;font-display:swap}
+@font-face{font-family:Fraunces;src:url(/fonts/fraunces.ttf) format("truetype");font-weight:400 500;font-display:swap}
+:root{--cu:#c98a55;--sand:#e8c4a2;--mut:#8a7d70;--line:#2a221c;--card:#0d0b09}
+*{box-sizing:border-box}
+html,body{margin:0;background:#000;color:var(--sand);font:15px/1.6 Inter,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:960px;margin:0 auto;padding:56px 28px 40px;min-height:100vh;display:flex;flex-direction:column}
+header{padding:12px 0 36px}
+.logo{display:block;width:min(380px,78vw);height:auto}
+.lede{margin:22px 0 0;max-width:30em;color:var(--mut);font-family:Fraunces,Georgia,serif;font-size:19px;line-height:1.5}
+.rule{height:1px;background:var(--line);border:0;margin:8px 0 32px;position:relative}
+.rule::after{content:"";position:absolute;left:0;top:-1px;width:44px;height:3px;border-radius:3px;background:var(--cu)}
+h2{margin:0 0 16px;font-size:12px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--mut)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+.tile{display:block;padding:22px 22px 20px;border:1px solid var(--line);border-radius:14px;background:var(--card);color:inherit;text-decoration:none;transition:border-color .2s,transform .2s}
+a.tile:hover,a.tile:focus-visible{border-color:var(--cu);transform:translateY(-2px);outline:none}
+.tile h3{margin:0 0 6px;font-family:Fraunces,Georgia,serif;font-weight:500;font-size:22px;color:var(--sand)}
+.tile p{margin:0;color:var(--mut);font-size:14px}
+.tile .go{display:inline-block;margin-top:16px;color:var(--cu);font-size:13px;font-weight:500}
+.tile.soon{border-style:dashed;background:transparent}
+.tile.soon h3{color:#5e544a}.tile.soon p{color:#4d453d}
+footer{margin-top:auto;padding-top:56px;color:#4d453d;font-size:12px}
+@media (max-width:560px){.wrap{padding:32px 20px 28px}.lede{font-size:17px}header{padding-bottom:24px}}
+</style></head><body><div class="wrap">
+<header><img class="logo" src="/solavant-logo.jpg" width="797" height="414" alt="Solavant">
+<p class="lede">Our home base. Pick a workspace below.</p></header>
+<hr class="rule">
+<h2>Workspaces</h2>
+<main class="tiles">
+<a class="tile" href="/magpy/"><h3>Magpy</h3><p>Intern dashboard: tasks, calendar, meetings, and hours for Myles, Ariel, and Can.</p><span class="go">Open &rarr;</span></a>
+<div class="tile soon" aria-hidden="true"><h3>More soon</h3><p>Space for the next project.</p></div>
+</main>
+<footer>Solavant Capital Management<span id="who"></span></footer>
+<script>fetch("/api/auth/me").then(r=>r.json()).then(j=>{if(j.user){const w=document.getElementById("who");w.innerHTML=" · "+j.user.email.replace(/[<>&]/g,"")+" · <a href=\"/api/auth/logout\" style=\"color:#c98a55\">Sign out</a>"}}).catch(()=>{});</script>
+</div></body></html>

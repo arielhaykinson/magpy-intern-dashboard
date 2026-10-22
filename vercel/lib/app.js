@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const { getStore } = require("./kv");
+const gauth = require("./gauth");
 
 const uid = () => "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const seedTasks = () => {
@@ -31,7 +32,13 @@ function notionView(db) {
     configured, ok: configured && !n.error, databaseId: configured ? (n.databaseId || "") : "",
     syncedAt: n.syncedAt || 0, error: configured ? (n.error || "") : "", warning: configured ? (n.warning || "") : "",
     count: ((db && db.tasks) || []).filter((t) => t.notionId).length,
+    droppedLocal: configured ? (n.droppedLocal || []) : [],
   };
+}
+function shownTasks(db) {
+  const tasks = (db && db.tasks) || [];
+  if (!notionConfigured()) return tasks;
+  return tasks.filter((t) => t && (t.notionId || t.localDirty));
 }
 async function notionSyncFor(db) {
   const m = await notionReady;
@@ -47,6 +54,11 @@ async function notionSyncFor(db) {
       if (info && info.tasksChanged) {
         const n = (next.tasks || []).filter((t) => t.notionId).length;
         log(db, "Notion", "sync", null, `synced ${n} tasks from Solavant Interns · Tasks`);
+        const dropped = (info && info.dropped) || [];
+        if (dropped.length) {
+          const names = dropped.join(", ");
+          log(db, "Notion", "sync", null, names.length > 150 ? `removed ${dropped.length} local-only tasks that are not on Solavant Interns · Tasks` : `removed local-only tasks not on Solavant Interns · Tasks: ${names}`);
+        }
       }
     },
   });
@@ -58,13 +70,13 @@ async function readWithNotion(force) {
   const s = getStore();
   for (let i = 0; i < 6; i++) {
     const { rev, db } = await readState();
-    if (!force && notionFresh(db)) return { rev, db };
+    if (!force && notionFresh(db) && !((db.tasks || []).some((t) => t && !t.notionId && !t.localDirty))) return { rev, db };
     await (await notionSyncFor(db)).refresh(true);
     if (await s.cas(rev, db)) return { rev: rev + 1, db };
   }
   throw new Error("could not save Notion sync");
 }
-const view = (db, rev) => ({ rev, tasks: db.tasks, meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])), notion: notionView(db) });
+const view = (db, rev) => ({ rev, tasks: shownTasks(db), meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])), notion: notionView(db) });
 
 async function readState() {
   const s = getStore();
@@ -172,7 +184,13 @@ const reply = (res, r) => send(res, r.code, r.body);
 async function handler(req, res) {
   try {
     const url = new URL(req.url, "http://x"), p = url.pathname.replace(/\/+$/, "") || "/", by = String(req.headers["x-user"] || ""), M = req.method;
-    const { pw } = cfg();
+    if (await gauth.handleAuth(req, res, p, url)) return;
+    // Google sign-in (when configured) replaces the password gate for every other /api route.
+    if (gauth.enabled()) {
+      if (p === "/api/session" && M === "GET") { const u = gauth.sessionUser(req); return send(res, 200, { required: true, google: true, ok: !!u, user: u }); }
+      if (!gauth.sessionUser(req) && !gauth.syncKeyOk(req)) return send(res, 401, { error: "login required", login: "/login.html" });
+    }
+    const { pw } = gauth.enabled() ? { pw: "" } : cfg();
     if (p === "/api/session" && M === "GET") return send(res, 200, { required: !!pw, ok: !pw || hasSession(req) });
     if (p === "/api/login" && M === "POST") {
       if (!pw) return send(res, 200, { ok: true, required: false });

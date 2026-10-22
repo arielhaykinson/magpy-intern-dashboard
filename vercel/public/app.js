@@ -6,7 +6,7 @@ const I = (p, c = "ic") => `<svg class="${c}" viewBox="0 0 16 16" aria-hidden="t
 const ICONS = { caret: '<path d="M4.5 6.5 8 10l3.5-3.5"/>', prev: '<path d="M9.5 4 5.5 8l4 4"/>', next: '<path d="M6.5 4l4 4-4 4"/>', cal: '<rect x="2.5" y="3.5" width="11" height="10" rx="2"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/>', clock: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/>', inbox: '<path d="M2.5 9.5 4 4a1.5 1.5 0 0 1 1.4-1h5.2A1.5 1.5 0 0 1 12 4l1.5 5.5v2a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M2.5 9.5h3l.8 1.5h3.4l.8-1.5h3"/>', list: '<path d="M3 4.5h10M3 8h10M3 11.5h6"/>', board: '<rect x="2.5" y="3" width="4" height="10" rx="1.2"/><rect x="9.5" y="3" width="4" height="6" rx="1.2"/>' };
 const $ = (s) => document.querySelector(s);
 const FINE = matchMedia("(pointer:fine)").matches;
-let authRequired = false, data = { tasks: [], hours: {}, meetings: [], asks: [], comments: {}, activity: [] }, tab = "tasks", ownerF = "", selDay = "", demo = false;
+let authRequired = false, googleAuth = false, data = { tasks: [], hours: {}, meetings: [], asks: [], comments: {}, activity: [] }, tab = "tasks", ownerF = "", selDay = "", demo = false;
 const closed = new Set(); const today = new Date(); const iso = (d) => d.toLocaleDateString("en-CA");
 const TODAY = iso(today); let cur = new Date(today.getFullYear(), today.getMonth(), 1);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -19,15 +19,19 @@ const initials = (o) => (o === "Unassigned" ? "?" : o.slice(0, 2).toUpperCase())
 const av = (o) => `<span class="own"><i class="av av-${esc(o)}">${initials(o)}</i><span class="oname">${esc(o)}</span></span>`;
 const PRIS = ["Urgent", "High", "Medium", "Low"], PR = { Urgent: 0, High: 1, Medium: 2, Low: 3 };
 const pri = (t) => (PR[t.priority] === undefined ? "Low" : t.priority);
-let sortBy = "due";
+let sortBy = "due", groupBy = "owner";
 const byDue = (x, y) => (x.due ? 0 : 1) - (y.due ? 0 : 1) || (x.due || "").localeCompare(y.due || "");
 const cmpTasks = (x, y) => sortBy === "priority" ? PR[pri(x)] - PR[pri(y)] || byDue(x, y) : byDue(x, y) || PR[pri(x)] - PR[pri(y)];
 const priTag = (t) => `<button type="button" class="pri ${pri(t)}" data-pri="${t.id}" aria-haspopup="menu" title="Change priority">${pri(t)}</button>`;
+function onBoard(t) {
+  if (demo || !(data.notion && data.notion.configured)) return true;
+  return !!(t && (t.notionId || t.localDirty));
+}
 
 async function refresh() { try { data = await Store.load(); } catch (e) { if (loginOpen()) return; throw e; } if (demo) applyDemo(); render(); }
 function filtered() {
   const s = $("#fStatus").value;
-  return data.tasks.filter((t) => (!ownerF || t.owner === ownerF) && (!s || t.status === s) && (!$("#fPri").value || pri(t) === $("#fPri").value)).sort(cmpTasks);
+  return data.tasks.filter((t) => onBoard(t) && (!ownerF || t.owner === ownerF) && (!s || t.status === s) && (!$("#fPri").value || pri(t) === $("#fPri").value)).sort(cmpTasks);
 }
 function dueChip(t) {
   if (!t.due) return "";
@@ -72,14 +76,15 @@ function row(t) {
   <div class="meta">${dueChip(t)}<span class="status st-${t.status.replace(/ /g,"")}">${t.status}</span>${priTag(t)}${av(t.owner)}</div></div>`;
 }
 function renderList(list) {
-  $("#list").innerHTML = STATUSES.map((s) => {
-    const ts = list.filter((t) => t.status === s);
-    return `<div class="group ${closed.has(s) ? "closed" : ""}" data-g="${s}"><div class="ghead"><h2>${s}</h2><span class="count">${ts.length}</span></div>
-    <div class="rows">${ts.map(row).join("") || `<div class="empty">Nothing here yet</div>`}</div></div>`;
-  }).join("");
+  const bar = `<div class="groupbar" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 18px"><span class="ornament">Group</span><button type="button" class="chip ${groupBy === "owner" ? "on" : ""}" data-group="owner">By owner</button><button type="button" class="chip ${groupBy === "status" ? "on" : ""}" data-group="status">By status</button><span class="ornament">Sorted by due date</span></div>`;
+  const buckets = groupBy === "status"
+    ? STATUSES.map((s) => ({ key: s, label: s, hint: "Status", ts: list.filter((t) => t.status === s) }))
+    : OWNERS.map((s) => ({ key: s, label: s, hint: "Owner", ts: list.filter((t) => (t.owner || "Unassigned") === s) })).filter((g) => g.ts.length);
+  $("#list").innerHTML = bar + buckets.map((g) => `<div class="group ${closed.has(g.key) ? "closed" : ""}" data-g="${esc(g.key)}"><div class="ghead"><h2>${esc(g.label)}</h2><span class="count">${g.ts.length}</span><span class="ornament">${g.hint}</span></div>
+    <div class="rows">${g.ts.map(row).join("") || `<div class="empty">Nothing here yet</div>`}</div></div>`).join("");
 }
 function upNext() {
-  const ts = data.tasks.filter((t) => t.status !== "Done" && (!ownerF || t.owner === ownerF))
+  const ts = data.tasks.filter((t) => onBoard(t) && t.status !== "Done" && (!ownerF || t.owner === ownerF))
     .sort((x, y) => byDue(x, y) || PR[pri(x)] - PR[pri(y)]).slice(0, 5);
   $("#upnext").innerHTML = `<div class="uhead"><h2>Up next</h2><span class="ornament">A few things to look at first</span></div>` + (ts.map((t) =>
     `<div class="row" data-id="${t.id}"><input type="checkbox" class="cb" data-chk="${t.id}" aria-label="Mark done">
@@ -87,15 +92,16 @@ function upNext() {
     || `<div class="empty">All clear. Enjoy the quiet.</div>`);
 }
 function renderBoard(list) {
-  $("#board").innerHTML = STATUSES.map((s) => {
-    const ts = list.filter((t) => t.status === s);
+  const ordered = [...list].sort(cmpTasks);
+  $("#board").innerHTML = `<div style="grid-column:1 / -1;display:flex;align-items:baseline;gap:12px;margin:0 0 4px"><h2 style="font-family:var(--serif);font-weight:500;font-size:19px">By status</h2><span class="ornament">Sorted by due date</span></div>` + STATUSES.map((s) => {
+    const ts = ordered.filter((t) => t.status === s);
     return `<div class="col" data-status="${s}"><h2>${s}<span>${ts.length}</span></h2>${ts.map((t) =>
       `<div class="kcard" draggable="${FINE}" data-id="${t.id}"><b>${esc(t.title)}</b><div class="meta"><span class="pri ${pri(t)}">${pri(t)}</span>${dueChip(t)}${av(t.owner)}</div><label class="mv">Move to<select data-mv="${t.id}" aria-label="Move ${esc(t.title)} to status">${STATUSES.map((x) => `<option${x === t.status ? " selected" : ""}>${x}</option>`).join("")}</select></label></div>`).join("")}</div>`;
   }).join("");
 }
 function renderCal() {
   const y = cur.getFullYear(), m = cur.getMonth(), first = new Date(y, m, 1), start = new Date(y, m, 1 - ((first.getDay() + 6) % 7));
-  const by = {}; for (const t of data.tasks) if (t.due) (by[t.due] ||= []).push(t);
+  const by = {}; for (const t of data.tasks) if (t.due && onBoard(t)) (by[t.due] ||= []).push(t);
   const mby = {}; for (const m of liveMeetings()) (mby[iso(new Date(m.start))] ||= []).push(m);
   let cells = "";
   for (let i = 0; i < 42; i++) {
@@ -105,7 +111,7 @@ function renderCal() {
   }
   $("#cal").innerHTML = `<div class="chead"><h3>${cur.toLocaleDateString("en-US", { month: "long", year: "numeric" })}</h3><div class="nav"><button data-nav="-1" aria-label="Previous month">←</button><button data-nav="0">Today</button><button data-nav="1" aria-label="Next month">→</button></div></div>
   <div class="cgrid">${["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => `<div class="dow">${d}</div>`).join("")}${cells}</div>`;
-  const ts = selDay ? data.tasks.filter((t) => t.due === selDay) : [], dm = selDay ? liveMeetings().filter((m) => iso(new Date(m.start)) === selDay) : [];
+  const ts = selDay ? data.tasks.filter((t) => onBoard(t) && t.due === selDay) : [], dm = selDay ? liveMeetings().filter((m) => iso(new Date(m.start)) === selDay) : [];
   $("#day").innerHTML = selDay ? `<div class="phead"><h3>${pd(selDay).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</h3><button type="button" class="xbtn" data-dayclose aria-label="Close day panel">&times;</button></div>
    ${dm.map((m) => `<div class="drow mtgrow" data-mid="${m.id}"><span class="tm">${hm(m.start)}</span><span class="t">${esc(m.title)} <span class="mstat ms-${m.status.replace(/ /g, "")}">${m.status === "requested" ? "Requested" : "On calendar"}</span></span></div>`).join("")}${ts.map((t) => `<div class="drow ${t.status === "Done" ? "done" : ""}" data-id="${t.id}"><input type="checkbox" class="cb" data-chk="${t.id}" ${t.status === "Done" ? "checked" : ""}><span class="t">${esc(t.title)}</span>${av(t.owner)}</div>`).join("") || dm.length ? "" : `<div class="nothing">Nothing due this day. A nice open one.</div>`}
    <form class="dayadd" id="dayAdd" autocomplete="off"><input placeholder="Add task for this day…" id="dayTitle"><button class="primary sm">Add</button></form>`
@@ -125,7 +131,7 @@ function render() {
   document.querySelectorAll("#tabs a").forEach((a) => { const on = a.dataset.tab === tab; a.classList.toggle("on", on); on ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"); });
   { const a = document.querySelector("#tabs a.on"), bar = $("#tabs"); if (a && bar.scrollWidth > bar.clientWidth) bar.scrollTo({ left: a.offsetLeft - (bar.clientWidth - a.offsetWidth) / 2, behavior: "auto" }); }
   $("#ownerChips").innerHTML = ["", ...OWNERS].map((o) => `<button class="chip ${o === ownerF ? "on" : ""}" data-owner="${o}">${o || "Everyone"}</button>`).join("");
-  renderList(list); upNext(); renderBoard(data.tasks); renderCal(); renderMeetings(); renderAsk(); renderActivity(); renderHours(); if ($("#modal").open) { const id = $("#form").dataset.id, tt = id && data.tasks.find((x) => x.id === id); if (tt && !demo && JSON.stringify(tt.docs || []) !== JSON.stringify(docsDraft) && document.activeElement?.id !== "docUrl") { docsDraft = (tt.docs || []).slice(); renderDocs(); } renderComments(id); }
+  renderList(list); upNext(); renderBoard(data.tasks.filter((t) => onBoard(t) && (!ownerF || t.owner === ownerF) && (!$("#fPri").value || pri(t) === $("#fPri").value))); renderCal(); renderMeetings(); renderAsk(); renderActivity(); renderHours(); if ($("#modal").open) { const id = $("#form").dataset.id, tt = id && data.tasks.find((x) => x.id === id); if (tt && !demo && JSON.stringify(tt.docs || []) !== JSON.stringify(docsDraft) && document.activeElement?.id !== "docUrl") { docsDraft = (tt.docs || []).slice(); renderDocs(); } renderComments(id); }
 }
 function readHash() {
   const p = location.hash.slice(1).toLowerCase().split(/[&?\/,-]+/);
@@ -195,7 +201,12 @@ function setupSync() {
     } catch (e) { notionNote = "Notion refresh failed"; }
     b.disabled = false; paint();
   };
-  if (authRequired) { const o = document.createElement("a"); o.href = "#"; o.id = "logout"; o.textContent = "Log out"; o.style.cssText = "color:inherit;margin-left:auto"; o.onclick = async (e) => { e.preventDefault(); await Store.logout(); location.reload(); }; box.appendChild(o); }
+  if (authRequired) {
+    const o = document.createElement("a"); o.id = "logout"; o.textContent = "Log out"; o.style.cssText = "color:inherit;margin-left:auto";
+    if (googleAuth) o.href = "/api/auth/logout";
+    else { o.href = "#"; o.onclick = async (e) => { e.preventDefault(); await Store.logout(); location.reload(); }; }
+    box.appendChild(o);
+  }
   paint(); if (demo) return;
   let busy = false, again = false;
   Store.subscribe(async (ev) => {
@@ -264,7 +275,11 @@ function setupMeetings() {
 async function init() {
   setupLogin();
   readHash();
-  if (!demo) { const ses = await Store.session(); authRequired = !!ses.required; if (ses.required && !ses.ok) showLogin(); }
+  if (!demo) {
+    const ses = await Store.session(); authRequired = !!ses.required; googleAuth = !!ses.google;
+    if (ses.google && !ses.ok) { location.href = "/login.html?next=" + encodeURIComponent(location.pathname + location.search); return; }
+    if (ses.required && !ses.ok) showLogin();
+  }
   setupMeetings();
   readHash(); setupSync();
   greet();
@@ -307,6 +322,7 @@ async function init() {
     const chk = g.closest("[data-chk]");
     if (chk) { const t = byId(chk.dataset.chk); t.status = chk.checked ? "Done" : "Open"; if (demo) { render(); return; } await Store.saveTask(t); refresh(); return; }
     const oc = g.closest("[data-owner]"); if (oc) { ownerF = oc.dataset.owner; render(); return; }
+    const grp = g.closest("[data-group]"); if (grp) { groupBy = grp.dataset.group === "status" ? "status" : "owner"; render(); return; }
     const nav = g.closest("[data-nav]"); if (nav) { const n = +nav.dataset.nav; cur = n === 0 ? new Date(today.getFullYear(), today.getMonth(), 1) : new Date(cur.getFullYear(), cur.getMonth() + n, 1); if (n === 0) selDay = TODAY; render(); return; }
     const dc = g.closest("[data-day]"); if (dc) { selDay = selDay === dc.dataset.day ? "" : dc.dataset.day; render(); return; }
     const gh = g.closest(".ghead"); if (gh) { const s = gh.parentElement.dataset.g; closed.has(s) ? closed.delete(s) : closed.add(s); render(); return; }
@@ -374,7 +390,12 @@ async function sendAsk() {
 const loginOpen = () => !$("#login").hidden;
 function showLogin() { if (loginOpen()) return; $("#login").hidden = false; document.body.classList.add("locked"); $("#loginErr").textContent = ""; setTimeout(() => $("#loginPw").focus(), 30); }
 function setupLogin() {
-  window.addEventListener("magpy-auth", showLogin);
+  window.addEventListener("magpy-auth", () => {
+    fetch("/api/auth/me", { cache: "no-store" }).then((r) => r.json()).then((j) => {
+      if (j && j.enabled) location.href = "/login.html?next=" + encodeURIComponent(location.pathname + location.search);
+      else showLogin();
+    }).catch(() => showLogin());
+  });
   $("#loginForm").onsubmit = async (e) => {
     e.preventDefault(); const pw = $("#loginPw").value, err = $("#loginErr"), btn = e.target.querySelector("button"); if (!pw) { err.textContent = "Enter the password."; return; }
     btn.disabled = true; err.textContent = "";

@@ -104,7 +104,11 @@ export class Dashboard extends DurableObject {
     }
     this.dirty.clear(); if (Object.keys(out).length) await s.put(out);
   }
-  view() { const db = this.db; return { tasks: db.tasks, meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])), notion: notionPublic(db.notion, !!this._notionToken, db.tasks) }; }
+  view() {
+    const db = this.db;
+    const tasks = this._notionToken ? (db.tasks || []).filter((t) => t && (t.notionId || t.localDirty)) : db.tasks;
+    return { tasks, meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])), notion: notionPublic(db.notion, !!this._notionToken, db.tasks) };
+  }
   ensureNotion() {
     if (this.notionSync) return this.notionSync;
     this.notionSync = createNotionSync({
@@ -118,7 +122,12 @@ export class Dashboard extends DurableObject {
         if (meta.tasksChanged) {
           const n = (next.tasks || []).filter((t) => t.notionId).length;
           this.log("Notion", "sync", null, `synced ${n} tasks from Solavant Interns · Tasks`);
-          this.mark("tasks", "tombstones", "notion");
+          const dropped = meta.dropped || [];
+          if (dropped.length) {
+            const names = dropped.join(", ");
+            this.log("Notion", "sync", null, names.length > 150 ? `removed ${dropped.length} local-only tasks that are not on Solavant Interns · Tasks` : `removed local-only tasks not on Solavant Interns · Tasks: ${names}`);
+          }
+          this.mark("tasks", "tombstones", "notion", "activity");
           await this.flush();
           this.broadcast("notion");
         }
