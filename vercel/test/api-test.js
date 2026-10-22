@@ -125,6 +125,7 @@ function portalFiles() {
     "portal/solavant-logo.jpg": "1c2d9013c9b9c81d280c560dcc73e1e9c90fd313",
     "middleware.js": "468c293be7fdda85aea19abcf47f0a4b98883a66",
     "vercel/lib/gauth.js": "28ca20bca73cfe95fa0934597653a92f435fd276",
+    "vercel/public/style.css": "90cb8727578b2be0c0fa3d61474ecb59d3532de6",
   };
   for (const [rel, sha] of Object.entries(expect)) {
     const buf = fs.readFileSync(path.join(root, rel));
@@ -138,6 +139,8 @@ function portalFiles() {
   assert.match(fs.readFileSync(path.join(built, "index.html"), "utf8"), /Our home base/);
   assert.match(fs.readFileSync(path.join(built, "magpy/index.html"), "utf8"), /Solavant home/);
   assert.match(fs.readFileSync(path.join(built, "app.js"), "utf8"), /refreshNotion/);
+  assert.match(fs.readFileSync(path.join(built, "app.js"), "utf8"), /By owner/);
+  assert.match(fs.readFileSync(path.join(built, "style.css"), "utf8"), /--bg:#faf8f4/);
   assert.match(fs.readFileSync(path.join(built, "login.html"), "utf8"), /\/api\/auth\/login/);
   console.log("PASS portal files");
 }

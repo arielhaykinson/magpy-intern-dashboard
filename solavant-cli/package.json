@@ -1,0 +1,8 @@
+{
+  "name": "magpy-dashboard-vercel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Magpy interns dashboard: static frontend + Vercel Functions + Upstash Redis",
+  "engines": { "node": ">=18" },
+  "scripts": { "dev": "node test/harness.js", "test": "node test/api-test.js" }
+}

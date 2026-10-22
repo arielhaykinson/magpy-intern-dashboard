@@ -3,7 +3,7 @@ import http from "http";
 import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
-import { queryAllPages, mergeNotionTasks, mapPage, resolveDatabaseId, propertiesForTask, INTERN_TASKS_DATABASE_ID, STALE_MIRROR_DATABASE_ID, DEFAULT_SCHEMA } from "./notion-sync.mjs";
+import { queryAllPages, mergeNotionTasks, mapPage, resolveDatabaseId, propertiesForTask, tasksForView, INTERN_TASKS_DATABASE_ID, STALE_MIRROR_DATABASE_ID, DEFAULT_SCHEMA } from "./notion-sync.mjs";
 
 const page = (id, title, extra = {}) => ({
   id, url: "https://www.notion.so/" + id, archived: false,
@@ -91,6 +91,19 @@ const localEdit = { id: "abc", notionId: "abc", title: "dashboard edit", status:
 const kept = mergeNotionTasks([...seeds, localEdit], [page("abc", "older notion title", { status: "Open", owner: "Ariel", edited: "2026-10-21T19:00:00.000Z" })], {}, { dropSeeds: true });
 assert(!kept.tasks.some((t) => t.title === "Natrion source list"), "untouched starter rows are not the board");
 assert.equal(kept.tasks.find((t) => t.notionId === "abc").title, "dashboard edit");
+const localOnly = mergeNotionTasks([
+  ...seeds,
+  { id: "hi", title: "hi", status: "Open", owner: "Can", due: "", priority: "Low", area: "Magpy", notes: "", docs: [] },
+  { id: "model", title: "Finish the model template/foundation for all SPC work", status: "Open", owner: "Myles", due: "", priority: "Medium", area: "Magpy", notes: "", docs: [] },
+  { id: "pending", title: "A real new task", status: "Open", owner: "Ariel", due: "2026-10-30", priority: "High", area: "Magpy", notes: "", docs: [], localDirty: true, localEditedAt: Date.now() },
+], [page("abc", "From Notion", { status: "Open", owner: "Can" })], {}, { dropSeeds: true });
+assert.deepEqual(localOnly.dropped.slice().sort(), ["Finish the model template/foundation for all SPC work", "Natrion source list", "hi"]);
+assert(!localOnly.tasks.some((t) => t.title === "hi" || t.title.startsWith("Finish the model")));
+assert(localOnly.tasks.some((t) => t.title === "A real new task" && t.localDirty && !t.notionId));
+assert(localOnly.tasks.some((t) => t.notionId === "abc"));
+const shown = tasksForView(localOnly.tasks, true);
+assert(!shown.some((t) => !t.notionId && !t.localDirty));
+assert.equal(tasksForView(localOnly.tasks, false).length, localOnly.tasks.length);
 const mylesWins = mergeNotionTasks(kept.tasks, [page("abc", "Myles updated the title", { status: "Review", owner: "Myles", edited: "2026-10-21T22:00:00.000Z" })], {}, { dropSeeds: true });
 assert.equal(mylesWins.tasks.find((t) => t.notionId === "abc").title, "Myles updated the title");
 assert.equal(mylesWins.tasks.find((t) => t.notionId === "abc").status, "Review");

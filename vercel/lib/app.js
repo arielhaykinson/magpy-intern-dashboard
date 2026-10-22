@@ -32,7 +32,13 @@ function notionView(db) {
     configured, ok: configured && !n.error, databaseId: configured ? (n.databaseId || "") : "",
     syncedAt: n.syncedAt || 0, error: configured ? (n.error || "") : "", warning: configured ? (n.warning || "") : "",
     count: ((db && db.tasks) || []).filter((t) => t.notionId).length,
+    droppedLocal: configured ? (n.droppedLocal || []) : [],
   };
+}
+function shownTasks(db) {
+  const tasks = (db && db.tasks) || [];
+  if (!notionConfigured()) return tasks;
+  return tasks.filter((t) => t && (t.notionId || t.localDirty));
 }
 async function notionSyncFor(db) {
   const m = await notionReady;
@@ -48,6 +54,11 @@ async function notionSyncFor(db) {
       if (info && info.tasksChanged) {
         const n = (next.tasks || []).filter((t) => t.notionId).length;
         log(db, "Notion", "sync", null, `synced ${n} tasks from Solavant Interns · Tasks`);
+        const dropped = (info && info.dropped) || [];
+        if (dropped.length) {
+          const names = dropped.join(", ");
+          log(db, "Notion", "sync", null, names.length > 150 ? `removed ${dropped.length} local-only tasks that are not on Solavant Interns · Tasks` : `removed local-only tasks not on Solavant Interns · Tasks: ${names}`);
+        }
       }
     },
   });
@@ -59,13 +70,13 @@ async function readWithNotion(force) {
   const s = getStore();
   for (let i = 0; i < 6; i++) {
     const { rev, db } = await readState();
-    if (!force && notionFresh(db)) return { rev, db };
+    if (!force && notionFresh(db) && !((db.tasks || []).some((t) => t && !t.notionId && !t.localDirty))) return { rev, db };
     await (await notionSyncFor(db)).refresh(true);
     if (await s.cas(rev, db)) return { rev: rev + 1, db };
   }
   throw new Error("could not save Notion sync");
 }
-const view = (db, rev) => ({ rev, tasks: db.tasks, meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])), notion: notionView(db) });
+const view = (db, rev) => ({ rev, tasks: shownTasks(db), meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])), notion: notionView(db) });
 
 async function readState() {
   const s = getStore();

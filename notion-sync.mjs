@@ -252,13 +252,26 @@ function mergeDocs(local, incoming) {
   return [...(incoming || []), ...keep].slice(0, 20);
 }
 
+// Notion is the board. A complete pull drops every local row that was never written to Notion
+// (starter tasks, one-off notes such as "hi") unless a dashboard save is still waiting to push.
+export function tasksForView(tasks, configured) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  if (!configured) return list;
+  return list.filter((t) => t && (t.notionId || t.localDirty));
+}
+
 export function mergeNotionTasks(tasks, pages, tombstones, { partial, dropSeeds, comments } = {}) {
   const tombs = { ...(tombstones || {}) };
   const schema = cloneSchema();
   let changed = false;
+  const dropped = [];
   const kept = [];
   for (const t of tasks || []) {
-    if (dropSeeds && isUntouchedSeed(t, comments)) { changed = true; continue; }
+    if (dropSeeds && t && !t.notionId && !t.localDirty) {
+      changed = true;
+      dropped.push(String(t.title || "Untitled"));
+      continue;
+    }
     kept.push(t);
   }
   const index = new Map();
@@ -301,7 +314,7 @@ export function mergeNotionTasks(tasks, pages, tombstones, { partial, dropSeeds,
       }
     }
   }
-  return { tasks: kept, tombstones: tombs, changed, schema };
+  return { tasks: kept, tombstones: tombs, changed, schema, dropped };
 }
 
 function pickValue(values, want, fallback) {
@@ -377,6 +390,7 @@ export function notionPublic(meta, configured, tasks) {
     error: configured ? (n.error || "") : "",
     warning: configured ? (n.warning || "") : "",
     count: (tasks || []).filter((t) => t.notionId).length,
+    droppedLocal: configured ? (n.droppedLocal || []) : [],
   };
 }
 
@@ -414,7 +428,8 @@ export function createNotionSync(opts) {
     meta.error = result.error || "";
     meta.schema = merged.schema;
     meta.count = merged.tasks.filter((t) => t.notionId).length;
-    await opts.commit({ tasks: merged.tasks, tombstones: merged.tombstones, notion: meta }, { tasksChanged: merged.changed });
+    if (merged.dropped.length) meta.droppedLocal = merged.dropped;
+    await opts.commit({ tasks: merged.tasks, tombstones: merged.tombstones, notion: meta }, { tasksChanged: merged.changed, dropped: merged.dropped });
   }
   function start(force) {
     if (inflight && (inflightForce || !force)) return inflight;
@@ -428,10 +443,11 @@ export function createNotionSync(opts) {
     const meta = state().notion || {};
     const wait = meta.error ? Math.min(syncMs(), 10_000) : syncMs();
     const fresh = meta.syncedAt && Date.now() - meta.syncedAt < wait;
-    if (!force && fresh) return snap();
+    const hasLocalOnly = (state().tasks || []).some((t) => t && !t.notionId && !t.localDirty);
+    if (!force && fresh && !hasLocalOnly) return snap();
     const job = start(!!force);
     const have = (state().tasks || []).some((t) => t.notionId);
-    if (!force && have) return snap();
+    if (!force && have && !hasLocalOnly) return snap();
     await job;
     return snap();
   }

@@ -30,7 +30,8 @@ db.hours ||= {}; db.tombstones ||= {}; db.meetings ||= []; db.asks ||= []; db.co
 function persist() { const tmp = DB + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(db, null, 1)); fs.renameSync(tmp, DB); dirty = true; }
 if (migrated) persist();
 let notionPublicFn = () => ({ configured: !!process.env.NOTION_TOKEN, ok: false, databaseId: "", syncedAt: 0, error: "", warning: "", count: (db.tasks || []).filter((t) => t.notionId).length });
-const view = () => ({ tasks: db.tasks, meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])), notion: notionPublicFn() });
+const shownTasks = () => process.env.NOTION_TOKEN ? (db.tasks || []).filter((t) => t && (t.notionId || t.localDirty)) : db.tasks;
+const view = () => ({ tasks: shownTasks(), meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])), notion: notionPublicFn() });
 
 function backup() {
   if (!dirty) return; dirty = false;
@@ -57,6 +58,11 @@ const notionReady = import("./notion-sync.mjs").then((m) => {
       if (meta.tasksChanged) {
         const n = (next.tasks || []).filter((t) => t.notionId).length;
         log("Notion", "sync", null, `synced ${n} tasks from Solavant Interns · Tasks`);
+        const dropped = meta.dropped || [];
+        if (dropped.length) {
+          const names = dropped.join(", ");
+          log("Notion", "sync", null, names.length > 150 ? `removed ${dropped.length} local-only tasks that are not on Solavant Interns · Tasks` : `removed local-only tasks not on Solavant Interns · Tasks: ${names}`);
+        }
         persist(); broadcast("notion");
       }
     },

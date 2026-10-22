@@ -13,7 +13,7 @@ Static frontend in `public/`, one Vercel Function (`api/[...path].js` when the r
 4. Optional password: `APP_PASSWORD` and `SESSION_SECRET` (any long random string). Leave `APP_PASSWORD` unset for no password login. Google sign-in, when `GOOGLE_CLIENT_ID` is set, replaces that password gate: also set `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`, and `ALLOWED_EMAILS` (comma or space separated; `@domain.com` allows a domain; empty or `*` allows any verified Google account). Optional `PUBLIC_URL` pins the OAuth redirect host. `SYNC_KEY` (32+ characters) lets a bearer token call `/api/*` without a browser session.
 5. Redeploy so env vars take effect. Open the dashboard and click **Refresh Notion**, or wait for the next poll (the page checks every ~2 seconds; Notion itself is pulled at most once per `NOTION_SYNC_MS`).
 
-Until `NOTION_TOKEN` is set, the board stays on its local starter tasks and Refresh Notion says so.
+Until `NOTION_TOKEN` is set, the board stays on its local starter tasks and Refresh Notion says so. After a successful pull, tasks that have no Notion page are dropped, and dashboard edits are written back to Solavant Interns · Tasks. `public/style.css` is the stylesheet from the Oct 13 Solavant deployment.
 
 ## Local testing
 - `npm run dev` : harness on http://localhost:3000 (serves `public/`, mounts the API, file store in `.data/`). Env: `PORT`, `DATA_DIR`, `APP_PASSWORD`, or Upstash vars to use Redis.
