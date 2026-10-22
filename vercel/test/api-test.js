@@ -40,6 +40,14 @@ async function suite(label, setup) {
   d = (await call("GET", "/api/data")).j; assert.equal(d.tasks.filter((x) => x.id.startsWith("c")).length, 30, "no lost updates");
   assert.equal((await call("GET", "/api/events")).s, 410); assert.equal((await call("GET", "/api/zzz")).s, 404);
   assert.equal((await call("POST", "/api/reset")).j.ok, true); d = (await call("GET", "/api/data")).j; assert.equal(d.tasks.length, 8); assert.equal(d.asks.length, 1); assert.equal(d.meetings.length, 0);
+  const priv = (await call("GET", "/api/privates/data")).j;
+  assert.equal(priv.tasks.length, 0, "privates does not copy Magpy tasks");
+  assert.equal(priv.notion.configured, false);
+  assert.equal((await call("PUT", "/api/privates/task", { id: "priv-1", title: "Privates only row" })).j.applied, true);
+  const priv2 = (await call("GET", "/api/privates/data")).j;
+  assert.equal(priv2.tasks.length, 1); assert.equal(priv2.tasks[0].title, "Privates only row");
+  d = (await call("GET", "/api/data")).j;
+  assert.equal(d.tasks.length, 8); assert(!d.tasks.some((t) => t.title === "Privates only row"));
   assert.deepEqual((await call("GET", "/api/session")).j, { required: false, ok: true });
   process.env.APP_PASSWORD = "pw-test"; process.env.SESSION_SECRET = "s3cret";
   assert.deepEqual((await call("GET", "/api/session")).j, { required: true, ok: false });
@@ -70,10 +78,51 @@ async function notionSuite() {
   delete process.env.VERCEL; delete process.env.KV_REST_API_URL; delete process.env.KV_REST_API_TOKEN; delete process.env.UPSTASH_REDIS_REST_URL; delete process.env.UPSTASH_REDIS_REST_TOKEN;
   const pages = [notionPage("Myles moved this to Review", "Review", "Myles")];
   const seen = [];
+  const PRIV = "c7832a86522a4e26ae7311d9662c460b";
+  let privatesMode = "missing";
+  const privatePage = () => ({
+    id: "privatepage000000000000000001", url: "https://www.notion.so/private", archived: false,
+    last_edited_time: "2026-10-22T16:00:00.000Z",
+    properties: {
+      "Task name": { type: "title", title: [{ plain_text: "Partner introduction" }] },
+      Status: { type: "status", status: { name: "Not started" } },
+      Owner: { type: "select", select: { name: "Ariel" } },
+      Priority: { type: "select", select: { name: "High" } },
+      Area: { type: "select", select: { name: "Solavant Private" } },
+      Due: { type: "date", date: { start: "2026-11-01" } },
+      Archived: { type: "checkbox", checkbox: false },
+    },
+  });
   const mock = http.createServer((req, res) => {
     let b = ""; req.on("data", (c) => b += c); req.on("end", () => {
       seen.push({ url: req.url, method: req.method, body: b ? JSON.parse(b) : null });
+      const dbGet = (req.url.match(/\/databases\/([^/?]+)$/) || [])[1];
+      if (req.method === "GET" && dbGet) {
+        if (dbGet === PRIV && privatesMode !== "missing") {
+          const opt = (names) => names.map((name) => ({ name }));
+          res.writeHead(200, { "content-type": "application/json" });
+          return res.end(JSON.stringify({ properties: {
+            "Task name": { type: "title", title: {} },
+            Status: { type: "status", status: { options: opt(["Not started", "In progress", "Review", "Done"]) } },
+            Owner: { type: "select", select: { options: opt(["Myles", "Ariel", "Can", "Advay"]) } },
+            Priority: { type: "select", select: { options: opt(["High", "Medium", "Low"]) } },
+            Area: { type: "select", select: { options: opt(["Solavant Private", "Research", "Other"]) } },
+            Due: { type: "date", date: {} },
+          } }));
+        }
+        res.writeHead(404); return res.end(JSON.stringify({ message: "no database" }));
+      }
+      if (req.method === "POST" && /\/pages$/.test(req.url)) {
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ id: "privatepage000000000000000002", url: "https://www.notion.so/newp", last_edited_time: "2026-10-22T17:00:00.000Z" }));
+      }
       if (req.method === "POST" && /\/databases\/[^/]+\/query$/.test(req.url)) {
+        const id = (req.url.match(/databases\/([^/]+)\/query/) || [])[1];
+        if (id === PRIV) {
+          if (privatesMode === "missing") { res.writeHead(404); return res.end(JSON.stringify({ message: "Could not find database with ID: " + PRIV })); }
+          res.writeHead(200, { "content-type": "application/json" });
+          return res.end(JSON.stringify({ results: privatesMode === "live" ? [privatePage()] : [], has_more: false, next_cursor: null }));
+        }
         res.writeHead(200, { "content-type": "application/json" });
         return res.end(JSON.stringify({ results: pages, has_more: false, next_cursor: null }));
       }
@@ -111,6 +160,47 @@ async function notionSuite() {
   const edited = await call("PUT", "/api/task", { ...d.tasks[0], title: "Edited on the dashboard", updatedAt: Date.now() });
   assert.equal(edited.j.applied, true); assert.equal(edited.j.notionError, "");
   assert(seen.some((s) => s.method === "PATCH" && s.url.includes("/pages/")));
+  const blocked = (await call("GET", "/api/privates/data")).j;
+  assert.equal(blocked.tasks.length, 0, "a 404 does not copy Magpy tasks into Privates");
+  assert.equal(blocked.notion.configured, true);
+  assert.equal(blocked.notion.ok, false);
+  assert.match(blocked.notion.error, /Not connected/);
+  assert.match(blocked.notion.error, /Solavant Private/);
+  assert.equal(blocked.notion.databaseId, PRIV);
+  assert(!blocked.tasks.some((t) => /Myles|Natrion/.test(t.title)));
+  assert.equal((await call("GET", "/api/data")).j.tasks.length, 1);
+  privatesMode = "empty";
+  const empty = await call("POST", "/api/privates/notion/refresh");
+  assert.equal(empty.j.ok, true, empty.j.error);
+  assert.equal(empty.j.count, 0);
+  assert.equal((await call("GET", "/api/privates/data")).j.tasks.length, 0);
+  privatesMode = "live";
+  const live = await call("POST", "/api/privates/notion/refresh");
+  assert.equal(live.j.ok, true, live.j.error);
+  let pd = (await call("GET", "/api/privates/data")).j;
+  assert.equal(pd.tasks.length, 1);
+  assert.equal(pd.tasks[0].title, "Partner introduction");
+  assert.equal(pd.tasks[0].area, "Solavant Private");
+  assert.equal((await call("GET", "/api/data")).j.tasks[0].title, "Edited on the dashboard");
+  privatesMode = "missing";
+  const again = await call("POST", "/api/privates/notion/refresh");
+  assert.match(again.j.error, /Not connected/);
+  assert.equal((await call("GET", "/api/privates/data")).j.tasks.length, 0);
+  privatesMode = "live";
+  assert.equal((await call("POST", "/api/privates/notion/refresh")).j.ok, true);
+  pd = (await call("GET", "/api/privates/data")).j;
+  assert.equal(pd.tasks.length, 1, "access granted later fills the board without a code change");
+  const created = await call("PUT", "/api/privates/task", { id: "priv-new", title: "New private task", status: "Open", owner: "Ariel", priority: "High", area: "Solavant Private", due: "", notes: "", updatedAt: Date.now() });
+  assert.equal(created.j.applied, true); assert.equal(created.j.notionError, "");
+  const post = seen.filter((s) => s.method === "POST" && /\/pages$/.test(s.url)).pop();
+  assert(post, "a Privates edit is written to Notion");
+  assert.equal(String(post.body.parent.database_id).replace(/-/g, ""), PRIV);
+  const magFile = JSON.parse(fs.readFileSync(path.join(process.env.DATA_DIR, "state.json"), "utf8"));
+  const privFile = JSON.parse(fs.readFileSync(path.join(process.env.DATA_DIR, "privates-state.json"), "utf8"));
+  assert(magFile.db.tasks.some((t) => t.title === "Edited on the dashboard"));
+  assert(!magFile.db.tasks.some((t) => t.title === "Partner introduction" || t.title === "New private task"));
+  assert(privFile.db.tasks.some((t) => t.title === "Partner introduction"));
+  assert(!privFile.db.tasks.some((t) => t.title === "Edited on the dashboard"));
   h.close(); mock.close();
   delete process.env.NOTION_TOKEN; delete process.env.NOTION_API_BASE;
   console.log("PASS notion sync");
@@ -119,7 +209,7 @@ function portalFiles() {
   const crypto = require("crypto");
   const root = path.join(__dirname, "..", "..");
   const expect = {
-    "portal/index.html": "98316505afa4f226ab0497ac9b9aee123b337105",
+    "portal/index.html": "b6953eacfb36107f68e468decf75c76d7ef344e8",
     "portal/login.html": "a63f4407a0f650e7979b1676f5522e21ea5e9f2f",
     "portal/magpy/index.html": "484b2e477740123f02df72916cb297c22793c6e9",
     "portal/solavant-logo.jpg": "1c2d9013c9b9c81d280c560dcc73e1e9c90fd313",
@@ -140,10 +230,16 @@ function portalFiles() {
   assert.match(privCss, /#C9A24A/);
   assert.match(privCss, /--bg:#1c1c1e/);
   assert.doesNotMatch(privCss, /#faf8f4|#6b8f7c|#ffffff|background:#fff/);
+  const privHtml = fs.readFileSync(path.join(root, "portal/privates/index.html"), "utf8");
   const privApp = fs.readFileSync(path.join(root, "portal/privates/app.js"), "utf8");
   const privStore = fs.readFileSync(path.join(root, "portal/privates/store.js"), "utf8");
-  assert.doesNotMatch(privApp + privStore, /\/api\/data|\/api\/task|\/api\/notion/);
-  assert.match(privStore, /Placeholder/);
+  assert.match(privStore, /\/api\/privates/);
+  assert.match(privStore, /\/data/);
+  assert.match(privStore, /\/notion\/refresh/);
+  assert.doesNotMatch(privStore, /fetch\("\/api\/data|fetch\("\/api\/task|fetch\("\/api\/notion|placeholder task/);
+  assert.match(privHtml, /id="notionBanner"/);
+  assert.match(privApp, /Not connected/);
+  assert.doesNotMatch(privHtml + privApp + privStore, /Placeholder/);
   assert.match(fs.readFileSync(path.join(root, "portal/login.html"), "utf8"), /Sign in with Google/);
   assert.match(fs.readFileSync(path.join(root, "middleware.js"), "utf8"), /solavant_session/);
   require(path.join(__dirname, "..", "copy-public.js"));
@@ -238,7 +334,14 @@ async function googleSuite() {
   await suite("file store", async () => { process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "magpy-")); delete process.env.UPSTASH_REDIS_REST_URL; delete process.env.KV_REST_API_URL; delete process.env.UPSTASH_REDIS_REST_TOKEN; delete process.env.KV_REST_API_TOKEN; });
   const fu = require("./fake-upstash").create(); await new Promise((r) => fu.srv.listen(0, r));
   await suite("upstash (fake REST, KV_REST_API_* names)", async () => { process.env.KV_REST_API_URL = "http://localhost:" + fu.srv.address().port; process.env.KV_REST_API_TOKEN = "tok"; });
-  assert(fu.kv.get("magpy:state")); console.log("upstash calls:", fu.calls()); fu.srv.close();
+  assert(fu.kv.get("magpy:state"));
+  assert(fu.kv.get("privates:state"), "privates uses its own Upstash key");
+  const magDoc = JSON.parse(fu.kv.get("magpy:state"));
+  const privDoc = JSON.parse(fu.kv.get("privates:state"));
+  assert(privDoc.tasks.some((t) => t.title === "Privates only row"));
+  assert(!privDoc.tasks.some((t) => /Natrion/.test(t.title)));
+  assert(!magDoc.tasks.some((t) => t.title === "Privates only row"));
+  console.log("upstash calls:", fu.calls()); fu.srv.close();
   await suite("vercel memory (no redis)", async () => { process.env.VERCEL = "1"; delete process.env.UPSTASH_REDIS_REST_URL; delete process.env.KV_REST_API_URL; delete process.env.UPSTASH_REDIS_REST_TOKEN; delete process.env.KV_REST_API_TOKEN; delete process.env.MAGPY_ALLOW_FILE; });
   await notionSuite();
   portalFiles();

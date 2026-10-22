@@ -24,8 +24,21 @@ const byDue = (x, y) => (x.due ? 0 : 1) - (y.due ? 0 : 1) || (x.due || "").local
 const cmpTasks = (x, y) => sortBy === "priority" ? PR[pri(x)] - PR[pri(y)] || byDue(x, y) : byDue(x, y) || PR[pri(x)] - PR[pri(y)];
 const priTag = (t) => `<button type="button" class="pri ${pri(t)}" data-pri="${t.id}" aria-haspopup="menu" title="Change priority">${pri(t)}</button>`;
 function onBoard(t) {
-  if (demo || !(data.notion && data.notion.configured)) return true;
+  const n = data.notion || {};
+  if (n.error || !n.configured) return !!(t && t.localDirty);
   return !!(t && (t.notionId || t.localDirty));
+}
+function notionMessage() {
+  const n = data.notion || {};
+  if (n.error) return n.error;
+  if (!n.configured) return "Not connected. Share Solavant Private · Tasks with the SCM Team integration in Notion. This list stays empty until that connection is added, then it fills in on its own.";
+  return "";
+}
+function notionBanner() {
+  const el = $("#notionBanner"); if (!el) return;
+  const msg = notionMessage();
+  el.hidden = !msg;
+  el.textContent = msg;
 }
 
 async function refresh() { try { data = await Store.load(); } catch (e) { if (loginOpen()) return; throw e; } if (demo) applyDemo(); render(); }
@@ -80,7 +93,8 @@ function renderList(list) {
   const buckets = groupBy === "status"
     ? STATUSES.map((s) => ({ key: s, label: s, hint: "Status", ts: list.filter((t) => t.status === s) }))
     : OWNERS.map((s) => ({ key: s, label: s, hint: "Owner", ts: list.filter((t) => (t.owner || "Unassigned") === s) })).filter((g) => g.ts.length);
-  $("#list").innerHTML = bar + buckets.map((g) => `<div class="group ${closed.has(g.key) ? "closed" : ""}" data-g="${esc(g.key)}"><div class="ghead"><h2>${esc(g.label)}</h2><span class="count">${g.ts.length}</span><span class="ornament">${g.hint}</span></div>
+  const note = list.length ? "" : `<div class="empty">${notionMessage() ? "Not connected. No tasks are loaded from Solavant Private · Tasks." : "No tasks yet."}</div>`;
+  $("#list").innerHTML = bar + note + buckets.map((g) => `<div class="group ${closed.has(g.key) ? "closed" : ""}" data-g="${esc(g.key)}"><div class="ghead"><h2>${esc(g.label)}</h2><span class="count">${g.ts.length}</span><span class="ornament">${g.hint}</span></div>
     <div class="rows">${g.ts.map(row).join("") || `<div class="empty">Nothing here yet</div>`}</div></div>`).join("");
 }
 function upNext() {
@@ -126,6 +140,7 @@ function renderHours() {
 let demoAsks = [];
 const TABS = ["tasks", "calendar", "board", "meetings", "ask", "activity", "hours"];
 function render() {
+  notionBanner();
   const list = filtered();
   for (const t of TABS) { $("#p" + t[0].toUpperCase() + t.slice(1)).hidden = t !== tab; }
   document.querySelectorAll("#tabs a").forEach((a) => { const on = a.dataset.tab === tab; a.classList.toggle("on", on); on ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"); });
@@ -139,37 +154,13 @@ function readHash() {
   if (p.includes("board")) tab = "board";
 }
 function openModal(t) {
-  const f = $("#form"); t = t || { status: "Open", owner: "Unassigned", priority: "Medium", area: "Private Capital" };
+  const f = $("#form"); t = t || { status: "Open", owner: "Unassigned", priority: "Medium", area: "Solavant Private" };
   $("#mTitle").textContent = t.id ? "Edit task" : "New task"; f.dataset.id = t.id || "";
   for (const k of ["title", "status", "owner", "due", "priority", "area", "notes"]) f.elements[k].value = t[k] || "";
   $("#del").style.display = t.id ? "" : "none"; renderComments(t.id || ""); $("#cmtIn").value = ""; docsDraft = (t.docs || []).slice(); $("#docUrl").value = ""; $("#docTitle").value = ""; renderDocs(); $("#modal").showModal();
 }
-const addTask = async (title, due, p) => { title = title.trim(); if (!title) return; await Store.saveTask({ title, status: "Open", owner: ownerF && ownerF !== "" ? ownerF : "Unassigned", due: due || "", priority: p || "Medium", area: "Private Capital", notes: "" }); refresh(); };
-function applyDemo() {
-  const T = data.tasks, off = (n) => { const d = new Date(today); d.setDate(d.getDate() + n); return iso(d); };
-  if (T.length < 8) return;
-  const dd = (id, url, title) => ({ id, url, title, addedBy: "Ariel", addedAt: new Date().toISOString() });
-  T[1].docs = [dd("d1", "https://docs.google.com/document/d/abc/edit", "Placeholder memo"), dd("d2", "https://docs.google.com/presentation/d/abc/edit", ""), dd("d3", "https://docs.google.com/spreadsheets/d/abc/edit", "Placeholder source list")];
-  T[0].docs = [dd("d4", "https://docs.google.com/spreadsheets/d/xyz/edit", "")];
-  Object.assign(T[0], { owner: "Can", status: "In Progress", due: off(2) });
-  Object.assign(T[1], { owner: "Ariel", status: "In Progress", due: off(0) });
-  Object.assign(T[2], { status: "Review", owner: "Myles", due: off(-1), priority: "Urgent" });
-  Object.assign(T[3], { owner: "Ariel", due: off(5) });
-  Object.assign(T[4], { owner: "Can", due: off(5) });
-  Object.assign(T[5], { owner: "Myles", due: off(9) });
-  Object.assign(T[6], { owner: "Can", status: "Done", due: off(-3) });
-  Object.assign(T[7], { owner: "Ariel", due: off(13) });
-  const mt = (n, h, dur, title, at, st, extra = {}) => { const s = new Date(today); s.setDate(s.getDate() + n); s.setHours(h, 0, 0, 0); return { id: "demo" + title, title, start: s.toISOString(), end: new Date(+s + dur * 6e4).toISOString(), attendees: at, notes: "", meet: true, reminderMinutes: 10, status: st, googleEventId: null, ...extra }; };
-  data.meetings = [mt(1, 10, 30, "Placeholder: partner review", ["Myles", "Ariel"], "on calendar", { reminderMinutes: 60 }), mt(3, 14, 60, "Placeholder: team sync", ["Myles", "Ariel", "Can"], "requested"), mt(2, 11, 30, "Placeholder: facts walkthrough", ["Can"], "on calendar", { notes: "Sample meeting only" })];
-  const ago = (m) => new Date(Date.now() - m * 6e4).toISOString();
-  data.asks = [
-    { id: "da1", text: "Placeholder: move the sample memo to Review", createdBy: "Ariel", createdAt: ago(190), status: "handled", reply: "Placeholder reply. No database is connected.", repliedAt: ago(184) },
-    { id: "da2", text: "Schedule a meeting Tuesday at 2 with Myles and Can", createdBy: "Myles", createdAt: ago(75), status: "handled", reply: "Requested \"Intern sync\" for Tuesday at 2:00 PM with Myles and Can. It will show on the calendar shortly.", repliedAt: ago(70) },
-    { id: "da3", text: "Which tasks are overdue?", createdBy: "Can", createdAt: ago(3), status: "new", reply: null, repliedAt: null },
-    ...demoAsks,
-  ];
-  data.hours["Ariel|" + WEEK] = 9; data.hours["Can|" + WEEK] = 12.5;
-}
+const addTask = async (title, due, p) => { title = title.trim(); if (!title) return; await Store.saveTask({ title, status: "Open", owner: ownerF && ownerF !== "" ? ownerF : "Unassigned", due: due || "", priority: p || "Medium", area: "Solavant Private", notes: "" }); refresh(); };
+function applyDemo() {}
 function greet() {
   const who = Store.user() || "Ariel";
   const h = new Date().getHours(), g = h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
@@ -178,12 +169,31 @@ function greet() {
 function setupSync() {
   const top = document.querySelector(".top"), box = document.createElement("div");
   box.className = "sync"; box.style.cssText = "display:flex;gap:10px;align-items:center;font-size:12px;color:#c4b39a;margin-top:6px";
-  box.innerHTML = `<label>You are <select id="who"><option value="">choose…</option>${["Myles", "Ariel", "Can", "Advay"].map((n) => `<option>${n}</option>`).join("")}</select></label><span id="syncState" aria-live="polite"></span>`;
+  box.innerHTML = `<label>You are <select id="who"><option value="">choose…</option>${["Myles", "Ariel", "Can", "Advay"].map((n) => `<option>${n}</option>`).join("")}</select></label><button type="button" id="notionRefresh">Refresh Notion</button><span id="syncState" aria-live="polite"></span>`;
   top.appendChild(box); $("#who").value = Store.user();
   $("#who").onchange = () => { Store.setUser($("#who").value); greet(); };
+  let notionNote = "";
   const paint = () => {
-    $("#syncState").textContent = "Placeholder · not connected to a database";
-    $("#syncState").style.color = "#C9A24A";
+    const s = Store.status();
+    const n = data.notion || {};
+    const off = notionMessage();
+    let extra = notionNote ? " · " + notionNote : "";
+    if (!extra && off) extra = " · Not connected";
+    else if (!extra && n.configured && n.ok) extra = " · Notion synced";
+    $("#syncState").textContent = !s.online ? "● Offline" : s.saving ? "Saving…" : "● Saved" + extra;
+    $("#syncState").style.color = !s.online ? "#e0a090" : off ? "#C9A24A" : "";
+    const b = $("#notionRefresh");
+    if (b) b.title = n.error || "Pull the latest tasks from Solavant Private · Tasks";
+    notionBanner();
+  };
+  $("#notionRefresh").onclick = async () => {
+    const b = $("#notionRefresh"); b.disabled = true; notionNote = "refreshing Notion"; paint();
+    try {
+      const r = await Store.refreshNotion();
+      data = await Store.load(); render();
+      notionNote = r && r.error ? String(r.error).slice(0, 180) : "";
+    } catch (e) { notionNote = "Notion refresh failed"; }
+    b.disabled = false; paint();
   };
   if (authRequired) {
     const o = document.createElement("a"); o.id = "logout"; o.textContent = "Log out"; o.style.cssText = "color:inherit;margin-left:auto";
@@ -191,7 +201,7 @@ function setupSync() {
     else { o.href = "#"; o.onclick = async (e) => { e.preventDefault(); await Store.logout(); location.reload(); }; }
     box.appendChild(o);
   }
-  paint(); if (demo) return;
+  paint();
   let busy = false, again = false;
   Store.subscribe(async (ev) => {
     paint(); if (ev.type !== "change") return;
@@ -339,7 +349,7 @@ async function init() {
 }
 init();
 
-const PROMPTS = ["Placeholder: what should we review this week?", "Placeholder: schedule a partner meeting", "Placeholder: which sample tasks are open?"];
+const PROMPTS = ["What's due this week?", "Schedule a partner meeting", "Add a task for the next company screen"];
 const esc2 = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const askTime = (iso) => { const d = new Date(iso), t = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }); return d.toDateString() === new Date().toDateString() ? t : d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + ", " + t; };
 let askSig = "";
