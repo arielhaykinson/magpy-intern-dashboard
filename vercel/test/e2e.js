@@ -3,7 +3,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "magpy-e2e-"));
 const start = () => new Promise((r) => { for (const k of Object.keys(require.cache)) if (k.includes("/vercel/")) delete require.cache[k]; const s = require("./harness").create(); s.listen(+process.env.PORT || 3111, () => r(s)); });
 (async () => {
-  let srv = await start(); const U = "http://localhost:" + (+process.env.PORT || 3111) + "/index.html#tasks";
+  let srv = await start(); const U = "http://localhost:" + (+process.env.PORT || 3111) + "/magpy/#tasks";
   const b = await puppeteer.launch({ executablePath: "/usr/bin/google-chrome", args: ["--no-sandbox"], headless: "new" });
   const mk = async (name) => { const c = await b.createBrowserContext(); const p = await c.newPage(); await p.setViewport({ width: 1280, height: 860, deviceScaleFactor: 2 }); await p.evaluateOnNewDocument((n) => localStorage.setItem("magpy-user", n), name); await p.goto(U); await p.waitForSelector("#list .row"); return p; };
   const A = await mk("Ariel"), C = await mk("Can"), res = [], ok = (n, c) => { res.push((c ? "PASS " : "FAIL ") + n); console.log(res[res.length - 1]); };
