@@ -1,0 +1,416 @@
+const STATUSES = ["Open", "In Progress", "Review", "Done"];
+const OWNERS = ["Myles", "Ariel", "Can", "Advay", "Unassigned"];
+const INTERNS = ["Ariel", "Can"], TARGET = 15;
+const SCOLOR = { Open: "var(--s-open)", "In Progress": "var(--s-prog)", Review: "var(--s-rev)", Done: "var(--s-done)" };
+const I = (p, c = "ic") => `<svg class="${c}" viewBox="0 0 16 16" aria-hidden="true">${p}</svg>`;
+const ICONS = { caret: '<path d="M4.5 6.5 8 10l3.5-3.5"/>', prev: '<path d="M9.5 4 5.5 8l4 4"/>', next: '<path d="M6.5 4l4 4-4 4"/>', cal: '<rect x="2.5" y="3.5" width="11" height="10" rx="2"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/>', clock: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/>', inbox: '<path d="M2.5 9.5 4 4a1.5 1.5 0 0 1 1.4-1h5.2A1.5 1.5 0 0 1 12 4l1.5 5.5v2a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M2.5 9.5h3l.8 1.5h3.4l.8-1.5h3"/>', list: '<path d="M3 4.5h10M3 8h10M3 11.5h6"/>', board: '<rect x="2.5" y="3" width="4" height="10" rx="1.2"/><rect x="9.5" y="3" width="4" height="6" rx="1.2"/>' };
+const $ = (s) => document.querySelector(s);
+const FINE = matchMedia("(pointer:fine)").matches;
+let authRequired = false, googleAuth = false, data = { tasks: [], hours: {}, meetings: [], asks: [], comments: {}, activity: [] }, tab = "tasks", ownerF = "", selDay = "", demo = false;
+const closed = new Set(); const today = new Date(); const iso = (d) => d.toLocaleDateString("en-CA");
+const TODAY = iso(today); let cur = new Date(today.getFullYear(), today.getMonth(), 1);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const opts = (a, first) => (first ? `<option value="">${first}</option>` : "") + a.map((x) => `<option>${x}</option>`).join("");
+function weekStart(d = new Date()) { const x = new Date(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x.toLocaleDateString("en-CA"); }
+const WEEK = weekStart();
+const pd = (s) => new Date(s + "T00:00:00");
+const fmt = (s) => pd(s).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+const initials = (o) => (o === "Unassigned" ? "?" : o.slice(0, 2).toUpperCase());
+const av = (o) => `<span class="own"><i class="av av-${esc(o)}">${initials(o)}</i><span class="oname">${esc(o)}</span></span>`;
+const PRIS = ["Urgent", "High", "Medium", "Low"], PR = { Urgent: 0, High: 1, Medium: 2, Low: 3 };
+const pri = (t) => (PR[t.priority] === undefined ? "Low" : t.priority);
+let sortBy = "due", groupBy = "owner";
+const byDue = (x, y) => (x.due ? 0 : 1) - (y.due ? 0 : 1) || (x.due || "").localeCompare(y.due || "");
+const cmpTasks = (x, y) => sortBy === "priority" ? PR[pri(x)] - PR[pri(y)] || byDue(x, y) : byDue(x, y) || PR[pri(x)] - PR[pri(y)];
+const priTag = (t) => `<button type="button" class="pri ${pri(t)}" data-pri="${t.id}" aria-haspopup="menu" title="Change priority">${pri(t)}</button>`;
+function onBoard(t) {
+  if (demo || !(data.notion && data.notion.configured)) return true;
+  return !!(t && (t.notionId || t.localDirty));
+}
+
+async function refresh() { try { data = await Store.load(); } catch (e) { if (loginOpen()) return; throw e; } if (demo) applyDemo(); render(); }
+function filtered() {
+  const s = $("#fStatus").value;
+  return data.tasks.filter((t) => onBoard(t) && (!ownerF || t.owner === ownerF) && (!s || t.status === s) && (!$("#fPri").value || pri(t) === $("#fPri").value)).sort(cmpTasks);
+}
+function dueChip(t) {
+  if (!t.due) return "";
+  const diff = Math.round((pd(t.due) - pd(TODAY)) / 864e5), done = t.status === "Done";
+  const cls = done ? "" : diff < 0 ? "over" : diff <= 2 ? "soon" : "";
+  const lbl = diff === 0 ? "Today" : diff === 1 ? "Tomorrow" : fmt(t.due);
+  return `<span class="due ${cls}">${done ? "" : diff < 0 ? "Overdue · " : ""}${lbl}</span>`;
+}
+const DOC_MAX = 20; let docsDraft = [];
+const docKind = (u) => { try { const x = new URL(u), p = x.pathname; if (x.hostname === "docs.google.com") return p.startsWith("/presentation") ? "Slides" : p.startsWith("/spreadsheets") ? "Sheet" : "Doc"; return x.hostname.replace(/^www\./, ""); } catch { return "Link"; } };
+const docName = (d) => d.title || docKind(d.url);
+const safeUrl = (u) => /^https?:\/\//i.test(u) ? u : "#";
+const docChip = (t, inl) => (t.docs && t.docs.length) ? `<span class="docchip${inl ? " inl" : ""}" title="${esc(t.docs.map(docName).join(", "))}">📎 ${t.docs.length} ${t.docs.length === 1 ? "doc" : "docs"}</span>` : "";
+function renderDocs() {
+  $("#docN").textContent = docsDraft.length;
+  $("#docList").innerHTML = docsDraft.map((d) => `<li><a href="${esc(safeUrl(d.url))}" target="_blank" rel="noopener noreferrer">${d.title ? `<span class="dk">${esc(docKind(d.url).slice(0, 14))}</span>` : ""}${esc(docName(d))}</a><button type="button" class="dx" data-docdel="${esc(d.id)}" aria-label="Remove ${esc(docName(d))}">Remove</button></li>`).join("");
+  $("#docAdd").disabled = docsDraft.length >= DOC_MAX;
+}
+async function persistDocs() {
+  const id = $("#form").dataset.id; if (!id) return;
+  const t = data.tasks.find((x) => x.id === id); if (!t) return;
+  t.docs = docsDraft.slice();
+  if (demo) { render(); return; }
+  try { await Store.saveTask({ ...t, docs: docsDraft }); data = await Store.load(); const n = data.tasks.find((x) => x.id === id); if (n) docsDraft = (n.docs || []).slice(); render(); } catch {}
+}
+async function addDoc() {
+  const u = $("#docUrl"), ti = $("#docTitle"), v = u.value.trim();
+  if (!/^https?:\/\/\S+$/i.test(v)) { u.setCustomValidity("Paste a full link starting with http:// or https://"); u.reportValidity(); u.setCustomValidity(""); return; }
+  if (docsDraft.length >= DOC_MAX) return;
+  docsDraft.push({ id: "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), url: v, title: ti.value.trim().slice(0, 120), addedBy: Store.user() || "Ariel", addedAt: new Date().toISOString() });
+  u.value = ""; ti.value = ""; renderDocs(); persistDocs(); u.focus();
+}
+document.addEventListener("click", (e) => {
+  if (e.target.closest("#docAdd")) { addDoc(); return; }
+  const x = e.target.closest("[data-docdel]"); if (x) { docsDraft = docsDraft.filter((d) => d.id !== x.dataset.docdel); renderDocs(); persistDocs(); }
+});
+document.addEventListener("keydown", (e) => { if ((e.target.id === "docUrl" || e.target.id === "docTitle") && e.key === "Enter" && !e.isComposing) { e.preventDefault(); addDoc(); } });
+function row(t) {
+  return `<div class="row ${t.status === "Done" ? "done" : ""}" data-id="${t.id}">
+  <input type="checkbox" class="cb" data-chk="${t.id}" ${t.status === "Done" ? "checked" : ""} aria-label="Mark done">
+  <div style="min-width:0"><div class="title">${esc(t.title)}</div><div class="sub">${esc(t.area)}${docChip(t, 1)}</div></div>
+  <div class="meta">${dueChip(t)}<span class="status st-${t.status.replace(/ /g,"")}">${t.status}</span>${priTag(t)}${av(t.owner)}</div></div>`;
+}
+function renderList(list) {
+  const bar = `<div class="groupbar" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 18px"><span class="ornament">Group</span><button type="button" class="chip ${groupBy === "owner" ? "on" : ""}" data-group="owner">By owner</button><button type="button" class="chip ${groupBy === "status" ? "on" : ""}" data-group="status">By status</button><span class="ornament">Sorted by due date</span></div>`;
+  const buckets = groupBy === "status"
+    ? STATUSES.map((s) => ({ key: s, label: s, hint: "Status", ts: list.filter((t) => t.status === s) }))
+    : OWNERS.map((s) => ({ key: s, label: s, hint: "Owner", ts: list.filter((t) => (t.owner || "Unassigned") === s) })).filter((g) => g.ts.length);
+  $("#list").innerHTML = bar + buckets.map((g) => `<div class="group ${closed.has(g.key) ? "closed" : ""}" data-g="${esc(g.key)}"><div class="ghead"><h2>${esc(g.label)}</h2><span class="count">${g.ts.length}</span><span class="ornament">${g.hint}</span></div>
+    <div class="rows">${g.ts.map(row).join("") || `<div class="empty">Nothing here yet</div>`}</div></div>`).join("");
+}
+function upNext() {
+  const ts = data.tasks.filter((t) => onBoard(t) && t.status !== "Done" && (!ownerF || t.owner === ownerF))
+    .sort((x, y) => byDue(x, y) || PR[pri(x)] - PR[pri(y)]).slice(0, 5);
+  $("#upnext").innerHTML = `<div class="uhead"><h2>Up next</h2><span class="ornament">A few things to look at first</span></div>` + (ts.map((t) =>
+    `<div class="row" data-id="${t.id}"><input type="checkbox" class="cb" data-chk="${t.id}" aria-label="Mark done">
+    <div style="min-width:0"><div class="title">${esc(t.title)}</div>${t.docs && t.docs.length ? `<div class="sub">${docChip(t)}</div>` : ""}</div><div class="meta">${dueChip(t) || '<span class="due">No date</span>'}${priTag(t)}${av(t.owner)}</div></div>`).join("")
+    || `<div class="empty">All clear. Enjoy the quiet.</div>`);
+}
+function renderBoard(list) {
+  const ordered = [...list].sort(cmpTasks);
+  $("#board").innerHTML = `<div style="grid-column:1 / -1;display:flex;align-items:baseline;gap:12px;margin:0 0 4px"><h2 style="font-family:var(--serif);font-weight:500;font-size:19px">By status</h2><span class="ornament">Sorted by due date</span></div>` + STATUSES.map((s) => {
+    const ts = ordered.filter((t) => t.status === s);
+    return `<div class="col" data-status="${s}"><h2>${s}<span>${ts.length}</span></h2>${ts.map((t) =>
+      `<div class="kcard" draggable="${FINE}" data-id="${t.id}"><b>${esc(t.title)}</b><div class="meta"><span class="pri ${pri(t)}">${pri(t)}</span>${dueChip(t)}${av(t.owner)}</div><label class="mv">Move to<select data-mv="${t.id}" aria-label="Move ${esc(t.title)} to status">${STATUSES.map((x) => `<option${x === t.status ? " selected" : ""}>${x}</option>`).join("")}</select></label></div>`).join("")}</div>`;
+  }).join("");
+}
+function renderCal() {
+  const y = cur.getFullYear(), m = cur.getMonth(), first = new Date(y, m, 1), start = new Date(y, m, 1 - ((first.getDay() + 6) % 7));
+  const by = {}; for (const t of data.tasks) if (t.due && onBoard(t)) (by[t.due] ||= []).push(t);
+  const mby = {}; for (const m of liveMeetings()) (mby[iso(new Date(m.start))] ||= []).push(m);
+  let cells = "";
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start); d.setDate(start.getDate() + i); const k = iso(d), tk = by[k] || [], ms = mby[k] || [], ts = [...ms, ...tk];
+    if (i >= 35 && d.getMonth() !== m) break;
+    cells += `<button class="cell ${d.getMonth() !== m ? "out" : ""} ${k === TODAY ? "today" : ""} ${k === selDay ? "sel" : ""}" data-day="${k}"><span class="n">${d.getDate()}</span>${ts.length ? `<span class="dots" aria-label="${ts.length} items">${"<b></b>".repeat(Math.min(3, ts.length))}</span>` : ""}<span class="evs">${ts.slice(0, 2).map((t) => t.start ? `<i class="ev mtg" title="Meeting">${hm(t.start)} ${esc(t.title)}</i>` : `<i class="ev ${t.status === "Done" ? "done" : pri(t)}">${esc(t.title)}</i>`).join("")}${ts.length > 2 ? `<i class="more">+${ts.length - 2} more</i>` : ""}</span></button>`;
+  }
+  $("#cal").innerHTML = `<div class="chead"><h3>${cur.toLocaleDateString("en-US", { month: "long", year: "numeric" })}</h3><div class="nav"><button data-nav="-1" aria-label="Previous month">←</button><button data-nav="0">Today</button><button data-nav="1" aria-label="Next month">→</button></div></div>
+  <div class="cgrid">${["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => `<div class="dow">${d}</div>`).join("")}${cells}</div>`;
+  const ts = selDay ? data.tasks.filter((t) => onBoard(t) && t.due === selDay) : [], dm = selDay ? liveMeetings().filter((m) => iso(new Date(m.start)) === selDay) : [];
+  $("#day").innerHTML = selDay ? `<div class="phead"><h3>${pd(selDay).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</h3><button type="button" class="xbtn" data-dayclose aria-label="Close day panel">&times;</button></div>
+   ${dm.map((m) => `<div class="drow mtgrow" data-mid="${m.id}"><span class="tm">${hm(m.start)}</span><span class="t">${esc(m.title)} <span class="mstat ms-${m.status.replace(/ /g, "")}">${m.status === "requested" ? "Requested" : "On calendar"}</span></span></div>`).join("")}${ts.map((t) => `<div class="drow ${t.status === "Done" ? "done" : ""}" data-id="${t.id}"><input type="checkbox" class="cb" data-chk="${t.id}" ${t.status === "Done" ? "checked" : ""}><span class="t">${esc(t.title)}</span>${av(t.owner)}</div>`).join("") || dm.length ? "" : `<div class="nothing">Nothing due this day. A nice open one.</div>`}
+   <form class="dayadd" id="dayAdd" autocomplete="off"><input placeholder="Add task for this day…" id="dayTitle"><button class="primary sm">Add</button></form>`
+   : `<div class="pick">Pick a day to see what is on it, or add something new.</div>`;
+}
+function renderHours() {
+    $("#hours").innerHTML = `<div class="hhead"><h2>This week</h2><small>Target ${TARGET}h each</small></div>` + INTERNS.map((p) => {
+    const h = Number(data.hours[p + "|" + WEEK] || 0), pct = Math.min(100, (h / TARGET) * 100);
+    return `<div class="hp"><div class="hrow"><b>${p}</b><small>${h} / ${TARGET}h</small><input type="number" min="0" step="0.5" placeholder="0" data-p="${p}" value="${h || ""}"></div><div class="prog"><i style="width:${pct}%"></i></div></div>`;
+  }).join("");
+}
+let demoAsks = [];
+const TABS = ["tasks", "calendar", "board", "meetings", "ask", "activity", "hours"];
+function render() {
+  const list = filtered();
+  for (const t of TABS) { $("#p" + t[0].toUpperCase() + t.slice(1)).hidden = t !== tab; }
+  document.querySelectorAll("#tabs a").forEach((a) => { const on = a.dataset.tab === tab; a.classList.toggle("on", on); on ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"); });
+  { const a = document.querySelector("#tabs a.on"), bar = $("#tabs"); if (a && bar.scrollWidth > bar.clientWidth) bar.scrollTo({ left: a.offsetLeft - (bar.clientWidth - a.offsetWidth) / 2, behavior: "auto" }); }
+  $("#ownerChips").innerHTML = ["", ...OWNERS].map((o) => `<button class="chip ${o === ownerF ? "on" : ""}" data-owner="${o}">${o || "Everyone"}</button>`).join("");
+  renderList(list); upNext(); renderBoard(data.tasks.filter((t) => onBoard(t) && (!ownerF || t.owner === ownerF) && (!$("#fPri").value || pri(t) === $("#fPri").value))); renderCal(); renderMeetings(); renderAsk(); renderActivity(); renderHours(); if ($("#modal").open) { const id = $("#form").dataset.id, tt = id && data.tasks.find((x) => x.id === id); if (tt && !demo && JSON.stringify(tt.docs || []) !== JSON.stringify(docsDraft) && document.activeElement?.id !== "docUrl") { docsDraft = (tt.docs || []).slice(); renderDocs(); } renderComments(id); }
+}
+function readHash() {
+  const p = location.hash.slice(1).toLowerCase().split(/[&?\/,-]+/);
+  demo = p.includes("demo"); tab = TABS.find((t) => p.includes(t)) || "tasks";
+  if (p.includes("board")) tab = "board";
+}
+function openModal(t) {
+  const f = $("#form"); t = t || { status: "Open", owner: "Unassigned", priority: "Medium", area: "Private Capital" };
+  $("#mTitle").textContent = t.id ? "Edit task" : "New task"; f.dataset.id = t.id || "";
+  for (const k of ["title", "status", "owner", "due", "priority", "area", "notes"]) f.elements[k].value = t[k] || "";
+  $("#del").style.display = t.id ? "" : "none"; renderComments(t.id || ""); $("#cmtIn").value = ""; docsDraft = (t.docs || []).slice(); $("#docUrl").value = ""; $("#docTitle").value = ""; renderDocs(); $("#modal").showModal();
+}
+const addTask = async (title, due, p) => { title = title.trim(); if (!title) return; await Store.saveTask({ title, status: "Open", owner: ownerF && ownerF !== "" ? ownerF : "Unassigned", due: due || "", priority: p || "Medium", area: "Private Capital", notes: "" }); refresh(); };
+function applyDemo() {
+  const T = data.tasks, off = (n) => { const d = new Date(today); d.setDate(d.getDate() + n); return iso(d); };
+  if (T.length < 8) return;
+  const dd = (id, url, title) => ({ id, url, title, addedBy: "Ariel", addedAt: new Date().toISOString() });
+  T[1].docs = [dd("d1", "https://docs.google.com/document/d/abc/edit", "Placeholder memo"), dd("d2", "https://docs.google.com/presentation/d/abc/edit", ""), dd("d3", "https://docs.google.com/spreadsheets/d/abc/edit", "Placeholder source list")];
+  T[0].docs = [dd("d4", "https://docs.google.com/spreadsheets/d/xyz/edit", "")];
+  Object.assign(T[0], { owner: "Can", status: "In Progress", due: off(2) });
+  Object.assign(T[1], { owner: "Ariel", status: "In Progress", due: off(0) });
+  Object.assign(T[2], { status: "Review", owner: "Myles", due: off(-1), priority: "Urgent" });
+  Object.assign(T[3], { owner: "Ariel", due: off(5) });
+  Object.assign(T[4], { owner: "Can", due: off(5) });
+  Object.assign(T[5], { owner: "Myles", due: off(9) });
+  Object.assign(T[6], { owner: "Can", status: "Done", due: off(-3) });
+  Object.assign(T[7], { owner: "Ariel", due: off(13) });
+  const mt = (n, h, dur, title, at, st, extra = {}) => { const s = new Date(today); s.setDate(s.getDate() + n); s.setHours(h, 0, 0, 0); return { id: "demo" + title, title, start: s.toISOString(), end: new Date(+s + dur * 6e4).toISOString(), attendees: at, notes: "", meet: true, reminderMinutes: 10, status: st, googleEventId: null, ...extra }; };
+  data.meetings = [mt(1, 10, 30, "Placeholder: partner review", ["Myles", "Ariel"], "on calendar", { reminderMinutes: 60 }), mt(3, 14, 60, "Placeholder: team sync", ["Myles", "Ariel", "Can"], "requested"), mt(2, 11, 30, "Placeholder: facts walkthrough", ["Can"], "on calendar", { notes: "Sample meeting only" })];
+  const ago = (m) => new Date(Date.now() - m * 6e4).toISOString();
+  data.asks = [
+    { id: "da1", text: "Placeholder: move the sample memo to Review", createdBy: "Ariel", createdAt: ago(190), status: "handled", reply: "Placeholder reply. No database is connected.", repliedAt: ago(184) },
+    { id: "da2", text: "Schedule a meeting Tuesday at 2 with Myles and Can", createdBy: "Myles", createdAt: ago(75), status: "handled", reply: "Requested \"Intern sync\" for Tuesday at 2:00 PM with Myles and Can. It will show on the calendar shortly.", repliedAt: ago(70) },
+    { id: "da3", text: "Which tasks are overdue?", createdBy: "Can", createdAt: ago(3), status: "new", reply: null, repliedAt: null },
+    ...demoAsks,
+  ];
+  data.hours["Ariel|" + WEEK] = 9; data.hours["Can|" + WEEK] = 12.5;
+}
+function greet() {
+  const who = Store.user() || "Ariel";
+  const h = new Date().getHours(), g = h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+  $("#greet").innerHTML = `${g}, ${who}.<span>${today.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</span>`;
+}
+function setupSync() {
+  const top = document.querySelector(".top"), box = document.createElement("div");
+  box.className = "sync"; box.style.cssText = "display:flex;gap:10px;align-items:center;font-size:12px;color:#c4b39a;margin-top:6px";
+  box.innerHTML = `<label>You are <select id="who"><option value="">choose…</option>${["Myles", "Ariel", "Can", "Advay"].map((n) => `<option>${n}</option>`).join("")}</select></label><span id="syncState" aria-live="polite"></span>`;
+  top.appendChild(box); $("#who").value = Store.user();
+  $("#who").onchange = () => { Store.setUser($("#who").value); greet(); };
+  const paint = () => {
+    $("#syncState").textContent = "Placeholder · not connected to a database";
+    $("#syncState").style.color = "#C9A24A";
+  };
+  if (authRequired) {
+    const o = document.createElement("a"); o.id = "logout"; o.textContent = "Log out"; o.style.cssText = "color:inherit;margin-left:auto";
+    if (googleAuth) o.href = "/api/auth/logout";
+    else { o.href = "#"; o.onclick = async (e) => { e.preventDefault(); await Store.logout(); location.reload(); }; }
+    box.appendChild(o);
+  }
+  paint(); if (demo) return;
+  let busy = false, again = false;
+  Store.subscribe(async (ev) => {
+    paint(); if (ev.type !== "change") return;
+    if (busy) { again = true; return; } busy = true;
+    try { do { again = false; data = await Store.load(); render(); } while (again); } catch {} busy = false; paint();
+  });
+}
+
+const PEOPLE = ["Myles", "Ariel", "Can"];
+const liveMeetings = () => (data.meetings || []).filter((m) => m.status !== "cancelled");
+const hm = (s) => new Date(s).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }).replace(":00", "").replace(" ", "").toLowerCase();
+const RLBL = { 10: "10 min before", 60: "1 hour before", 1440: "1 day before" };
+const SLBL = { requested: "Requested", "on calendar": "On calendar", cancelled: "Cancelled" };
+function mrow(m) {
+  const d = new Date(m.start), dur = Math.round((new Date(m.end) - d) / 6e4), gone = m.status === "cancelled";
+  const durL = dur >= 60 ? (dur / 60) + " hr" : dur + " min";
+  return `<div class="mrow ${gone ? "gone" : ""}" data-mid="${m.id}"><div class="mdate"><b>${d.getDate()}</b><span>${d.toLocaleDateString("en-US", { month: "short" })}</span></div>
+  <div style="min-width:0"><div class="mt">${esc(m.title)} <span class="mstat ms-${m.status.replace(/ /g, "")}">${SLBL[m.status]}</span></div>
+  <div class="msub">${d.toLocaleDateString("en-US", { weekday: "short" })} · ${hm(m.start)} to ${hm(m.end)} · ${durL}${m.meet ? " · Google Meet" : ""}${RLBL[m.reminderMinutes] ? " · Reminder " + RLBL[m.reminderMinutes] : ""}</div>
+  <div class="msub">${m.attendees.length ? esc(m.attendees.join(", ")) : "No attendees"}${m.notes ? " · " + esc(m.notes) : ""}</div></div>
+  <div class="mbtns">${gone ? "" : `<button data-medit="${m.id}">Edit</button><button class="danger" data-mcancel="${m.id}">Cancel</button>`}</div></div>`;
+}
+function renderMeetings() {
+  const now = Date.now(), all = (data.meetings || []).slice().sort((a, b) => a.start.localeCompare(b.start));
+  const up = all.filter((m) => m.status !== "cancelled" && new Date(m.end) >= now), past = all.filter((m) => m.status !== "cancelled" && new Date(m.end) < now).reverse(), gone = all.filter((m) => m.status === "cancelled");
+  const grp = (h, l, open) => l.length || open ? `<div class="mgroup"><h2>${h}<span class="count">${l.length}</span></h2>${l.map(mrow).join("") || `<div class="empty">No upcoming meetings. Schedule one above.</div>`}</div>` : "";
+  $("#mlist").innerHTML = grp("Upcoming", up, true) + grp("Past", past) + grp("Cancelled", gone);
+}
+function mReset() {
+  const f = $("#mform"); f.reset(); f.dataset.id = ""; $("#mfTitle").textContent = "Schedule a meeting"; $("#mSave").textContent = "Request meeting"; $("#mReset").hidden = true; $("#mErr").textContent = "";
+  f.elements.date.value = TODAY; f.querySelectorAll("#mWho input").forEach((c) => (c.checked = false));
+}
+function mEdit(m) {
+  const f = $("#mform"), s = new Date(m.start), pad = (n) => String(n).padStart(2, "0"); mReset(); f.dataset.id = m.id;
+  f.elements.title.value = m.title; f.elements.date.value = iso(s); f.elements.time.value = pad(s.getHours()) + ":" + pad(s.getMinutes());
+  const dur = Math.round((new Date(m.end) - s) / 6e4); if (![...f.elements.duration.options].some((o) => +o.value === dur)) f.elements.duration.add(new Option(dur + " min", dur)); f.elements.duration.value = dur;
+  const known = m.attendees.filter((a) => PEOPLE.includes(a));
+  f.querySelectorAll("#mWho input").forEach((c) => (c.checked = known.includes(c.value)));
+  f.elements.extra.value = m.attendees.filter((a) => !PEOPLE.includes(a)).join(", "); f.elements.notes.value = m.notes || "";
+  f.elements.meet.checked = !!m.meet; f.elements.reminder.value = String(m.reminderMinutes || 0);
+  $("#mfTitle").textContent = "Edit meeting"; $("#mSave").textContent = "Save changes (re-sync)"; $("#mReset").hidden = false; f.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function setupMeetings() {
+  $("#mWho").innerHTML = PEOPLE.map((n) => `<label><input type="checkbox" value="${n}"> ${n}</label>`).join(""); mReset();
+  $("#mReset").onclick = mReset;
+  $("#mform").addEventListener("submit", async (e) => {
+    e.preventDefault(); const f = e.target, el = f.elements, err = $("#mErr"); err.textContent = "";
+    const extra = el.extra.value.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean), bad = extra.find((x) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x));
+    if (bad) { err.textContent = `"${bad}" is not a valid email.`; return; }
+    const start = new Date(el.date.value + "T" + el.time.value); if (isNaN(start)) { err.textContent = "Pick a date and time."; return; }
+    const end = new Date(+start + +el.duration.value * 6e4);
+    const who = [...f.querySelectorAll("#mWho input:checked")].map((c) => c.value), m = f.dataset.id ? { ...(data.meetings || []).find((x) => x.id === f.dataset.id) } : {};
+    Object.assign(m, { title: el.title.value.trim(), start: start.toISOString(), end: end.toISOString(), attendees: [...who, ...extra.filter((x) => !who.includes(x))], notes: el.notes.value.trim(), meet: el.meet.checked, reminderMinutes: +el.reminder.value });
+    if (f.dataset.id) delete m.status;
+    try { await Store.saveMeeting(m); } catch { err.textContent = "Could not save. Check connection."; return; }
+    mReset(); refresh();
+  });
+  document.addEventListener("click", async (e) => {
+    const g = e.target, ed = g.closest("[data-medit]"), cn = g.closest("[data-mcancel]"), dr = g.closest(".mtgrow");
+    if (ed) mEdit(data.meetings.find((m) => m.id === ed.dataset.medit));
+    else if (cn && confirm("Cancel this meeting?")) { await Store.cancelMeeting(cn.dataset.mcancel); refresh(); }
+    else if (dr) { location.hash = "#meetings"; mEdit(data.meetings.find((m) => m.id === dr.dataset.mid)); }
+  });
+}
+async function init() {
+  setupLogin();
+  readHash();
+  if (!demo) {
+    const ses = await Store.session(); authRequired = !!ses.required; googleAuth = !!ses.google;
+    if (ses.google && !ses.ok) { location.href = "/login.html?next=" + encodeURIComponent(location.pathname + location.search); return; }
+    if (ses.required && !ses.ok) showLogin();
+  }
+  setupMeetings();
+  readHash(); setupSync();
+  greet();
+  $("#fStatus").innerHTML = opts(STATUSES, "All statuses");
+  $("#form").elements.status.innerHTML = opts(STATUSES); $("#form").elements.owner.innerHTML = opts(OWNERS);
+  $("#fPri").innerHTML = opts(PRIS, "All priorities"); $("#qPri").innerHTML = opts(PRIS); $("#qPri").value = "Medium";
+  $("#form").elements.priority.innerHTML = opts(PRIS);
+  $("#fStatus").onchange = render; $("#fPri").onchange = render; $("#sortBy").onchange = (e) => { sortBy = e.target.value; render(); };
+  const closeMenu = () => { $("#pmenu")?.remove(); document.querySelector("[data-pri][aria-expanded]")?.removeAttribute("aria-expanded"); };
+  const openMenu = (btn) => {
+    closeMenu(); const t = byId(btn.dataset.pri); if (!t) return; btn.setAttribute("aria-expanded", "true");
+    const m = document.createElement("div"); m.id = "pmenu"; m.setAttribute("role", "menu");
+    m.innerHTML = `<button type="button" class="pmx xbtn" data-pclose aria-label="Close priority menu">&times;</button>` + PRIS.map((p) => `<button type="button" role="menuitem" class="pm ${p === pri(t) ? "cur" : ""}" data-pset="${p}"><i class="pri ${p}">${p}</i></button>`).join("");
+    document.body.appendChild(m); const r = btn.getBoundingClientRect();
+    m.style.left = Math.max(8, Math.min(r.left + scrollX, innerWidth - m.offsetWidth - 8 + scrollX)) + "px"; m.style.top = r.bottom + scrollY + 6 + "px"; m.dataset.id = t.id; if (r.bottom + m.offsetHeight + 12 > innerHeight) m.style.top = r.top + scrollY - m.offsetHeight - 6 + "px"; (m.querySelector(".cur") || m.querySelector(".pm")).focus({ preventScroll: true });
+  };
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#pmenu")) { const b = document.querySelector("[data-pri][aria-expanded]"); closeMenu(); b?.focus(); } });
+  window.addEventListener("hashchange", () => { readHash(); render(); });
+  $("#cancel").onclick = () => $("#modal").close();
+  $("#xClose").onclick = () => $("#modal").close();
+  const md = $("#modal"); let pushed = false;
+  md.addEventListener("click", (e) => { if (e.target === md) md.close(); });
+  new MutationObserver(() => { if (md.open) { document.body.classList.add("mopen"); if (!pushed) { history.pushState({ m: 1 }, ""); pushed = true; } } else { document.body.classList.remove("mopen"); if (pushed) { pushed = false; if (history.state && history.state.m) history.back(); } } }).observe(md, { attributes: true, attributeFilter: ["open"] });
+  window.addEventListener("popstate", () => { if (md.open) { pushed = false; md.close(); } });
+  document.addEventListener("change", async (e) => { const s = e.target.closest?.("[data-mv]"); if (!s) return; const t = byId(s.dataset.mv); if (t && t.status !== s.value) { t.status = s.value; if (!demo) await Store.saveTask(t); refresh(); } });
+  $("#askText").addEventListener("focus", () => setTimeout(() => $("#askForm").scrollIntoView({ block: "end", behavior: "smooth" }), 300));
+  if (window.visualViewport) visualViewport.addEventListener("resize", () => { const a = document.activeElement; if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) a.scrollIntoView({ block: "center" }); });
+  $("#quick").onsubmit = (e) => { e.preventDefault(); const v = $("#qTitle").value; $("#qTitle").value = ""; addTask(v, "", $("#qPri").value); };
+  const byId = (id) => data.tasks.find((t) => t.id === id);
+  document.addEventListener("click", async (e) => {
+    const g = e.target;
+    if (g.closest("[data-pclose]")) { const b = document.querySelector("[data-pri][aria-expanded]"); closeMenu(); b?.focus(); return; }
+    if (g.closest("[data-back]")) { location.hash = "#tasks"; return; }
+    if (g.closest("[data-dayclose]")) { selDay = ""; render(); return; }
+    if (g.closest("[data-mv]")) return;
+    const ps = g.closest("[data-pset]");
+    if (ps) { const id = $("#pmenu").dataset.id, t = byId(id); closeMenu(); if (t && t.priority !== ps.dataset.pset) { t.priority = ps.dataset.pset; if (demo) { render(); return; } await Store.saveTask(t); refresh(); } return; }
+    const pb = g.closest("[data-pri]"); if (pb) { const was = pb.hasAttribute("aria-expanded"); closeMenu(); if (!was) openMenu(pb); return; }
+    closeMenu();
+    const chk = g.closest("[data-chk]");
+    if (chk) { const t = byId(chk.dataset.chk); t.status = chk.checked ? "Done" : "Open"; if (demo) { render(); return; } await Store.saveTask(t); refresh(); return; }
+    const oc = g.closest("[data-owner]"); if (oc) { ownerF = oc.dataset.owner; render(); return; }
+    const grp = g.closest("[data-group]"); if (grp) { groupBy = grp.dataset.group === "status" ? "status" : "owner"; render(); return; }
+    const nav = g.closest("[data-nav]"); if (nav) { const n = +nav.dataset.nav; cur = n === 0 ? new Date(today.getFullYear(), today.getMonth(), 1) : new Date(cur.getFullYear(), cur.getMonth() + n, 1); if (n === 0) selDay = TODAY; render(); return; }
+    const dc = g.closest("[data-day]"); if (dc) { selDay = selDay === dc.dataset.day ? "" : dc.dataset.day; render(); return; }
+    const gh = g.closest(".ghead"); if (gh) { const s = gh.parentElement.dataset.g; closed.has(s) ? closed.delete(s) : closed.add(s); render(); return; }
+    const ac = g.closest("[data-aid]"); if (ac) { const t = byId(ac.dataset.aid); if (t) openModal(t); return; }
+    const el = g.closest("[data-id]"); if (el && el.closest("#upnext,#list,#board,#day")) openModal(byId(el.dataset.id));
+  });
+  document.addEventListener("submit", (e) => { if (e.target.id === "dayAdd") { e.preventDefault(); const v = $("#dayTitle").value; addTask(v, selDay); } });
+  $("#form").addEventListener("submit", async (e) => {
+    if (e.submitter?.value !== "save") return;
+    const f = e.target, t = { id: f.dataset.id || undefined };
+    for (const k of ["title", "status", "owner", "due", "priority", "area", "notes"]) t[k] = f.elements[k].value.trim();
+    t.area ||= "Private Capital"; t.docs = docsDraft.slice(); await Store.saveTask(t); refresh();
+  });
+  $("#del").onclick = async () => { const id = $("#form").dataset.id; if (id && confirm("Delete this task?")) { await Store.deleteTask(id); $("#modal").close(); refresh(); } };
+  $("#hours").addEventListener("change", async (e) => { if (e.target.dataset.p) { await Store.setHours(e.target.dataset.p, WEEK, Math.max(0, +e.target.value || 0)); refresh(); } });
+  let dragId = null;
+  document.addEventListener("dragstart", (e) => { const c = e.target.closest?.(".kcard"); if (c) { dragId = c.dataset.id; c.classList.add("drag"); } });
+  document.addEventListener("dragend", () => document.querySelectorAll(".drag,.over").forEach((x) => x.classList.remove("drag", "over")));
+  document.addEventListener("dragover", (e) => { const c = e.target.closest?.(".col"); if (c) { e.preventDefault(); c.classList.add("over"); } });
+  document.addEventListener("dragleave", (e) => e.target.closest?.(".col")?.classList.remove("over"));
+  document.addEventListener("drop", async (e) => {
+    const c = e.target.closest?.(".col"); if (!c || !dragId) return; e.preventDefault();
+    const t = byId(dragId); dragId = null; if (t && t.status !== c.dataset.status) { t.status = c.dataset.status; if (!demo) await Store.saveTask(t); } refresh();
+  });
+  readHash();
+  if (demo && tab === "calendar") selDay = TODAY;
+  await refresh();
+  if (/modal/.test(location.hash)) openModal(data.tasks[1]);
+  if (/pmenu/.test(location.hash)) document.querySelectorAll("#upnext [data-pri]")[1]?.click();
+}
+init();
+
+const PROMPTS = ["Placeholder: what should we review this week?", "Placeholder: schedule a partner meeting", "Placeholder: which sample tasks are open?"];
+const esc2 = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const askTime = (iso) => { const d = new Date(iso), t = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }); return d.toDateString() === new Date().toDateString() ? t : d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + ", " + t; };
+let askSig = "";
+function renderAsk() {
+  const el = $("#askThread"), asks = data.asks || [], sig = JSON.stringify(asks) + tab;
+  if (sig === askSig) return; askSig = sig;
+  const near = el.scrollHeight - el.scrollTop - el.clientHeight < 60, first = !el.dataset.done;
+  el.innerHTML = asks.length ? asks.map((a) => `<div class="ask"><div class="bub me"><div class="bwho"><i class="av av-${esc2(a.createdBy)}">${esc2((a.createdBy || "?")[0])}</i><b>${esc2(a.createdBy || "Someone")}</b><small>${askTime(a.createdAt)}</small></div><p>${esc2(a.text)}</p></div>${
+    a.status === "handled" ? `<div class="bub bot"><div class="bwho"><b>Assistant</b><small>${a.repliedAt ? askTime(a.repliedAt) : ""}</small></div><p>${esc2(a.reply || "Done.")}</p></div>` : `<div class="wait"><span class="dot"></span>Waiting for the assistant</div>`}</div>`).join("")
+    : `<p class="empty">Nothing here yet. Ask for something below, like moving a task or scheduling a meeting.</p>`;
+  if (first || near) { el.scrollTop = el.scrollHeight; el.dataset.done = "1"; }
+}
+async function sendAsk() {
+  const ta = $("#askText"), text = ta.value.trim(); if (!text) return;
+  ta.value = ""; ta.style.height = "";
+  if (demo) { demoAsks.push({ id: "dl" + Date.now(), text, createdBy: Store.user() || "Ariel", createdAt: new Date().toISOString(), status: "new", reply: null, repliedAt: null }); await refresh(); $("#askThread").scrollTop = 1e9; return; }
+  try { await Store.sendAsk(text); } catch { ta.value = text; return; }
+  data = await Store.load(); render(); $("#askThread").scrollTop = 1e9;
+}
+(function () {
+  const go = () => {
+    $("#askChips").innerHTML = PROMPTS.map((p) => `<button type="button" class="pchip">${esc2(p)}</button>`).join("");
+    $("#askChips").onclick = (e) => { const b = e.target.closest(".pchip"); if (b) { $("#askText").value = b.textContent; $("#askText").focus(); } };
+    $("#askForm").onsubmit = (e) => { e.preventDefault(); sendAsk(); };
+    $("#askText").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendAsk(); } });
+    $("#askText").addEventListener("input", (e) => { const t = e.target; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px"; });
+  };
+  go();
+})();
+
+
+const loginOpen = () => !$("#login").hidden;
+function showLogin() { if (loginOpen()) return; $("#login").hidden = false; document.body.classList.add("locked"); $("#loginErr").textContent = ""; setTimeout(() => $("#loginPw").focus(), 30); }
+function setupLogin() {
+  window.addEventListener("magpy-auth", () => {
+    fetch("/api/auth/me", { cache: "no-store" }).then((r) => r.json()).then((j) => {
+      if (j && j.enabled) location.href = "/login.html?next=" + encodeURIComponent(location.pathname + location.search);
+      else showLogin();
+    }).catch(() => showLogin());
+  });
+  $("#loginForm").onsubmit = async (e) => {
+    e.preventDefault(); const pw = $("#loginPw").value, err = $("#loginErr"), btn = e.target.querySelector("button"); if (!pw) { err.textContent = "Enter the password."; return; }
+    btn.disabled = true; err.textContent = "";
+    try { await Store.login(pw); } catch (x) { err.textContent = x.message; btn.disabled = false; $("#loginPw").select(); return; }
+    btn.disabled = false; $("#loginPw").value = ""; $("#login").hidden = true; document.body.classList.remove("locked"); authRequired = true;
+    if (!$("#logout")) { const o = document.createElement("a"); o.href = "#"; o.id = "logout"; o.textContent = "Log out"; o.style.cssText = "color:inherit;margin-left:auto"; o.onclick = async (ev) => { ev.preventDefault(); await Store.logout(); location.reload(); }; document.querySelector(".sync")?.appendChild(o); }
+    Store.reconnect(); refresh();
+  };
+}
+
+const when = (iso) => { const d = new Date(iso), t = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }); return d.toDateString() === new Date().toDateString() ? "Today, " + t : d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + ", " + t; };
+let cmtSig = "";
+function renderComments(id) {
+  const box = $("#cmts"); box.hidden = !id; if (!id) { cmtSig = ""; return; }
+  const list = (data.comments || {})[id] || [], sig = id + JSON.stringify(list); if (sig === cmtSig) return; cmtSig = sig;
+  const el = $("#cmtList"), near = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  $("#cmtN").textContent = list.length;
+  el.innerHTML = list.map((c) => `<div class="cmt"><i class="av av-${esc(c.author)}">${esc((c.author || "?")[0])}</i><div><div class="cwho"><b>${esc(c.author || "Someone")}</b><small>${when(c.at)}</small></div><p>${esc(c.text)}</p></div></div>`).join("") || `<div class="empty">No comments yet.</div>`;
+  if (near || sig.length) el.scrollTop = near ? el.scrollHeight : el.scrollTop;
+}
+async function postComment() {
+  const inp = $("#cmtIn"), text = inp.value.trim(), id = $("#form").dataset.id; if (!text || !id) return;
+  inp.value = ""; $("#cmtBtn").disabled = true;
+  try { await Store.addComment(id, text); } catch { inp.value = text; $("#cmtBtn").disabled = false; return; }
+  $("#cmtBtn").disabled = false; data = await Store.load(); cmtSig = ""; render(); const el = $("#cmtList"); el.scrollTop = el.scrollHeight; inp.focus();
+}
+document.addEventListener("click", (e) => { if (e.target.closest("#cmtBtn")) postComment(); });
+document.addEventListener("keydown", (e) => { if (e.target.id === "cmtIn" && e.key === "Enter" && !e.isComposing) { e.preventDefault(); postComment(); } });
+let actSig = "";
+function renderActivity() {
+  const a = data.activity || [], sig = JSON.stringify(a) + tab; if (sig === actSig) return; actSig = sig;
+  $("#activity").innerHTML = a.length ? a.slice(0, 60).map((x) => `<div class="act ${x.taskId ? "link" : ""}" ${x.taskId ? `data-aid="${esc(x.taskId)}"` : ""}><i class="av av-${esc(x.who)}">${esc((x.who || "?")[0])}</i><div class="atxt"><span><b>${esc(x.who || "Someone")}</b> ${esc(x.text)}</span>${x.title ? `<span class="atask">${esc(x.title)}</span>` : ""}</div><small>${when(x.at)}</small></div>`).join("")
+    : `<p class="empty">No activity yet. Changes to tasks and comments will show up here.</p>`;
+}

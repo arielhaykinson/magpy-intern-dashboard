@@ -31,6 +31,7 @@
     { "source": "/api/:path*", "destination": "/api/[...path]" }
   ],
   "redirects": [
-    { "source": "/magpy", "destination": "/magpy/", "permanent": false }
+    { "source": "/magpy", "destination": "/magpy/", "permanent": false },
+    { "source": "/privates", "destination": "/privates/", "permanent": false }
   ]
 }

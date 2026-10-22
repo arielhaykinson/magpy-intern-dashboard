@@ -17,7 +17,7 @@ Then open http://localhost:8765
 - `NOTION_API_BASE` – optional override for tests. Defaults to `https://api.notion.com/v1`.
 
 ## Deploy
-- Vercel (Solavant): import this repo and leave **Root Directory** as the repository root. `vercel.json` builds a static copy of `vercel/public/`, then the Solavant portal in `portal/` (`/` front page, `/login.html` Google sign-in, dashboard at `/magpy/`). `/api/*` goes to one Node function (`api/[...path].js`). `middleware.js` requires Google sign-in when `GOOGLE_CLIENT_ID` is set. See `vercel/README.md` for env vars.
+- Vercel (Solavant): import this repo and leave **Root Directory** as the repository root. `vercel.json` builds a static copy of `vercel/public/`, then the Solavant portal in `portal/` (`/` front page, `/login.html` Google sign-in, Magpy at `/magpy/`, Solavant Private Capital placeholder at `/privates/`). `/api/*` goes to one Node function (`api/[...path].js`). `middleware.js` requires Google sign-in when `GOOGLE_CLIENT_ID` is set. See `vercel/README.md` for env vars.
 - Render: `render.yaml` blueprint (Node web service + persistent disk at `/data`).
 - Docker: `docker build -t magpy . && docker run -p 8765:8765 -v magpy-data:/data magpy`
 

@@ -119,7 +119,7 @@ function portalFiles() {
   const crypto = require("crypto");
   const root = path.join(__dirname, "..", "..");
   const expect = {
-    "portal/index.html": "dd5cb1f11d2b5dae0023211756d0196aa29c6475",
+    "portal/index.html": "98316505afa4f226ab0497ac9b9aee123b337105",
     "portal/login.html": "a63f4407a0f650e7979b1676f5522e21ea5e9f2f",
     "portal/magpy/index.html": "484b2e477740123f02df72916cb297c22793c6e9",
     "portal/solavant-logo.jpg": "1c2d9013c9b9c81d280c560dcc73e1e9c90fd313",
@@ -132,6 +132,18 @@ function portalFiles() {
     assert.equal(crypto.createHash("sha1").update(buf).digest("hex"), sha, rel);
   }
   assert.match(fs.readFileSync(path.join(root, "portal/index.html"), "utf8"), /href="\/magpy\/"/);
+  assert.match(fs.readFileSync(path.join(root, "portal/index.html"), "utf8"), /href="\/privates\/"/);
+  const logo = fs.readFileSync(path.join(root, "portal/privates/logo.png"));
+  assert.ok(logo.length > 1000);
+  const privCss = fs.readFileSync(path.join(root, "portal/privates/style.css"), "utf8");
+  assert.match(privCss, /#C8601F/);
+  assert.match(privCss, /#C9A24A/);
+  assert.match(privCss, /--bg:#1c1c1e/);
+  assert.doesNotMatch(privCss, /#faf8f4|#6b8f7c|#ffffff|background:#fff/);
+  const privApp = fs.readFileSync(path.join(root, "portal/privates/app.js"), "utf8");
+  const privStore = fs.readFileSync(path.join(root, "portal/privates/store.js"), "utf8");
+  assert.doesNotMatch(privApp + privStore, /\/api\/data|\/api\/task|\/api\/notion/);
+  assert.match(privStore, /Placeholder/);
   assert.match(fs.readFileSync(path.join(root, "portal/login.html"), "utf8"), /Sign in with Google/);
   assert.match(fs.readFileSync(path.join(root, "middleware.js"), "utf8"), /solavant_session/);
   require(path.join(__dirname, "..", "copy-public.js"));
@@ -141,6 +153,9 @@ function portalFiles() {
   assert.match(fs.readFileSync(path.join(built, "app.js"), "utf8"), /refreshNotion/);
   assert.match(fs.readFileSync(path.join(built, "app.js"), "utf8"), /By owner/);
   assert.match(fs.readFileSync(path.join(built, "style.css"), "utf8"), /--bg:#faf8f4/);
+  assert.match(fs.readFileSync(path.join(built, "privates/index.html"), "utf8"), /Solavant Private Capital/);
+  assert.match(fs.readFileSync(path.join(built, "privates/style.css"), "utf8"), /--bg:#1c1c1e/);
+  assert.match(fs.readFileSync(path.join(built, "magpy/index.html"), "utf8"), /\/style\.css\?v=18/);
   assert.match(fs.readFileSync(path.join(built, "login.html"), "utf8"), /\/api\/auth\/login/);
   console.log("PASS portal files");
 }
