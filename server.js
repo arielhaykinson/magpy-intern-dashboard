@@ -56,7 +56,7 @@ const notionReady = import("./notion-sync.mjs").then((m) => {
       db.tasks = next.tasks; db.tombstones = next.tombstones; db.notion = next.notion;
       if (meta.tasksChanged) {
         const n = (next.tasks || []).filter((t) => t.notionId).length;
-        log("Notion", "sync", null, `synced ${n} tasks from Intern Tasks`);
+        log("Notion", "sync", null, `synced ${n} tasks from Solavant Interns · Tasks`);
         persist(); broadcast("notion");
       }
     },

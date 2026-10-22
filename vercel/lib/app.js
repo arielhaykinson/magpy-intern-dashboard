@@ -46,7 +46,7 @@ async function notionSyncFor(db) {
       db.tasks = next.tasks; db.tombstones = next.tombstones; db.notion = next.notion;
       if (info && info.tasksChanged) {
         const n = (next.tasks || []).filter((t) => t.notionId).length;
-        log(db, "Notion", "sync", null, `synced ${n} tasks from Intern Tasks`);
+        log(db, "Notion", "sync", null, `synced ${n} tasks from Solavant Interns · Tasks`);
       }
     },
   });

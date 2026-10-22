@@ -184,14 +184,14 @@ function setupSync() {
     $("#syncState").textContent = s.demo ? "Demo (local only)" : !s.online ? "● Offline" : s.saving ? "Saving…" : "● Saved" + extra;
     $("#syncState").style.color = !s.online && !s.demo ? "#b4533c" : "";
     const b = $("#notionRefresh");
-    if (b) { b.hidden = !!s.demo; b.title = n.warning || n.error || "Pull the latest tasks from the Notion Intern Tasks board"; }
+    if (b) { b.hidden = !!s.demo; b.title = n.warning || n.error || "Pull the latest tasks from Solavant Interns · Tasks"; }
   };
   $("#notionRefresh").onclick = async () => {
     const b = $("#notionRefresh"); b.disabled = true; notionNote = "refreshing Notion"; paint();
     try {
       const r = await Store.refreshNotion();
       data = await Store.load(); render();
-      notionNote = !r || r.configured === false ? "set NOTION_TOKEN and share Intern Tasks with the integration" : r.error ? String(r.error).slice(0, 140) : "";
+      notionNote = !r || r.configured === false ? "set NOTION_TOKEN and share Solavant Interns · Tasks with the integration" : r.error ? String(r.error).slice(0, 140) : "";
     } catch (e) { notionNote = "Notion refresh failed"; }
     b.disabled = false; paint();
   };

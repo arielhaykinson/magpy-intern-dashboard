@@ -117,7 +117,7 @@ export class Dashboard extends DurableObject {
         this.db.tasks = next.tasks; this.db.tombstones = next.tombstones; this.db.notion = next.notion;
         if (meta.tasksChanged) {
           const n = (next.tasks || []).filter((t) => t.notionId).length;
-          this.log("Notion", "sync", null, `synced ${n} tasks from Intern Tasks`);
+          this.log("Notion", "sync", null, `synced ${n} tasks from Solavant Interns · Tasks`);
           this.mark("tasks", "tombstones", "notion");
           await this.flush();
           this.broadcast("notion");

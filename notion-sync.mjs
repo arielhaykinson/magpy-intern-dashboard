@@ -1,9 +1,9 @@
-// Pull Magpy intern tasks from the Notion Intern Tasks database.
+// Pull Magpy intern tasks from the Notion "Solavant Interns · Tasks" database.
 // The dashboard used to keep its own JSON / Durable Object copy and never asked Notion again.
 // A second database, "Magpy Intern Dashboard (Ariel)", is only an old export of that copy.
-// Myles edits Intern Tasks, so that is the database this module reads.
+// The SCM Team integration can read Solavant Interns · Tasks. The older Intern Tasks id 404s for that token.
 
-export const INTERN_TASKS_DATABASE_ID = "66707f68214540aabdbc3c14ccacc623";
+export const INTERN_TASKS_DATABASE_ID = "057cf17c94bb4acf988f926775660ab8";
 // Stale export of the dashboard's own rows (Name / Dashboard ID / Source). Not the board Myles edits.
 export const STALE_MIRROR_DATABASE_ID = "67b0ae62643246289339316b82f2a13e";
 export const NOTION_VERSION = "2022-06-28";
@@ -24,6 +24,7 @@ export const SEED_TITLES = [
 
 const DASH_STATUS = {
   open: "Open",
+  "not started": "Open",
   "in progress": "In Progress",
   inprogress: "In Progress",
   review: "Review",
@@ -40,7 +41,7 @@ export function resolveDatabaseId(raw) {
   if (id === STALE_MIRROR_DATABASE_ID) {
     return {
       databaseId: INTERN_TASKS_DATABASE_ID,
-      warning: "NOTION_DATABASE_ID points at the stale Magpy Intern Dashboard mirror, not Intern Tasks. Reading Intern Tasks instead.",
+      warning: "NOTION_DATABASE_ID points at the stale Magpy Intern Dashboard mirror, not Solavant Interns · Tasks. Reading Solavant Interns · Tasks instead.",
     };
   }
   return { databaseId: id, warning: "" };
@@ -80,42 +81,53 @@ function dashPriority(s) {
   return "Medium";
 }
 
+// Solavant Interns · Tasks: title is "Task name", Status is a status property
+// (Not started / In progress / Review / Done), Owner is a select (there is no Assignee),
+// Area includes Solavant, and there is no Description, Brief, or Output link column.
 export const DEFAULT_SCHEMA = {
-  title: "Title",
+  title: "Task name",
   status: "Status",
+  statusType: "status",
   owner: "Owner",
   priority: "Priority",
   area: "Area",
   due: "Due",
-  notes: "Description",
-  brief: "Brief",
-  output: "Output link",
-  statusValues: ["Open", "In progress", "Review", "Done"],
+  notes: "",
+  brief: "",
+  output: "",
+  statusValues: ["Not started", "In progress", "Review", "Done"],
   ownerValues: ["Ariel", "Can", "Myles", "Advay"],
   priorityValues: ["High", "Medium", "Low"],
-  areaValues: ["Magpy", "Optix", "Krino", "Research", "Other"],
+  areaValues: ["Magpy", "Optix", "Krino", "Solavant", "Research", "Other"],
 };
 
 function remember(list, value) {
   if (value && !list.includes(value)) list.push(value);
 }
 
-// Learn real property names from a page so a "Name" title or "In Progress" status is not missed,
-// while the default names match Intern Tasks (Title, "In progress", Description).
+// Learn real property names and types from a page. Notion includes every column, so a missing
+// Description / Brief / Output link means that column does not exist and must not be written.
 export function learnSchema(page, schema) {
   const props = (page && page.properties) || {};
   const titleKey = Object.keys(props).find((k) => props[k] && props[k].type === "title");
   if (titleKey) schema.title = titleKey;
+  const statusProp = props.Status;
+  if (statusProp && (statusProp.type === "status" || statusProp.type === "select")) {
+    schema.status = "Status";
+    schema.statusType = statusProp.type;
+  }
   const use = (name, type, field) => { if (props[name] && props[name].type === type) schema[field] = name; };
-  use("Status", "select", "status"); use("Status", "status", "status");
   use("Owner", "select", "owner");
   use("Priority", "select", "priority");
   use("Area", "select", "area");
   use("Due", "date", "due");
   if (props.Description && props.Description.type === "rich_text") schema.notes = "Description";
   else if (props.Notes && props.Notes.type === "rich_text") schema.notes = "Notes";
-  use("Brief", "url", "brief");
-  use("Output link", "url", "output");
+  else schema.notes = "";
+  if (props.Brief && props.Brief.type === "url") schema.brief = "Brief";
+  else schema.brief = "";
+  if (props["Output link"] && props["Output link"].type === "url") schema.output = "Output link";
+  else schema.output = "";
   remember(schema.statusValues, textOf(props[schema.status]));
   remember(schema.ownerValues, textOf(props[schema.owner]));
   remember(schema.priorityValues, textOf(props[schema.priority]));
@@ -128,6 +140,7 @@ function cloneSchema(schema) {
   return {
     ...DEFAULT_SCHEMA,
     ...s,
+    statusType: s.statusType || DEFAULT_SCHEMA.statusType,
     statusValues: [...(s.statusValues || DEFAULT_SCHEMA.statusValues)],
     ownerValues: [...(s.ownerValues || DEFAULT_SCHEMA.ownerValues)],
     priorityValues: [...(s.priorityValues || DEFAULT_SCHEMA.priorityValues)],
@@ -170,9 +183,17 @@ export function mapPage(page, schema) {
 }
 
 function explainHttp(status, message) {
-  if (status === 401) return "Notion rejected the token. Check NOTION_TOKEN.";
-  if (status === 403 || status === 404) return "Notion could not read the Intern Tasks database. Share that database with the integration. The Magpy Intern Dashboard mirror is a different database and does not get Myles's edits.";
-  return `Notion error (${status}): ${String(message || "").slice(0, 240)}`;
+  const detail = String(message || "").slice(0, 240);
+  const suffix = detail ? `: ${detail}` : "";
+  if (status === 401) return `Notion rejected the token (401${suffix}). Check NOTION_TOKEN.`;
+  if (status === 403 || status === 404) return `Notion could not read Solavant Interns · Tasks (${status}${suffix}). Share that database with the integration. The old Intern Tasks database and the Magpy Intern Dashboard mirror are different databases.`;
+  return `Notion error (${status}): ${detail}`;
+}
+
+// The board hides rows whose Archived checkbox is set. Those rows are not deleted in Notion.
+export function pageHiddenFromBoard(page) {
+  const prop = page && page.properties && page.properties.Archived;
+  return !!(prop && prop.type === "checkbox" && prop.checkbox);
 }
 
 // Follow has_more / next_cursor. A single page is at most 100 rows; stopping there hides later edits.
@@ -244,7 +265,7 @@ export function mergeNotionTasks(tasks, pages, tombstones, { partial, dropSeeds,
   for (const t of kept) index.set(t.notionId || t.id, t);
   const seen = new Set();
   for (const page of pages || []) {
-    if (!page || page.archived || !page.id) continue;
+    if (!page || page.archived || !page.id || pageHiddenFromBoard(page)) continue;
     const mapped = mapPage(page, schema);
     Object.assign(schema, mapped.schema);
     schema.statusValues = mapped.schema.statusValues;
@@ -289,23 +310,44 @@ function pickValue(values, want, fallback) {
   return fallback;
 }
 
+// Dashboard "Open" is the Solavant status option "Not started". A select board that still has "Open" keeps that name.
+function notionStatusName(schema, taskStatus) {
+  const want = String(taskStatus || "").trim();
+  const low = want.toLowerCase();
+  const find = (name) => (schema.statusValues || []).find((v) => v.toLowerCase() === name);
+  if (low === "open" || low === "") {
+    const open = find("open");
+    if (open) return open;
+    const notStarted = find("not started");
+    if (notStarted) return notStarted;
+    return "Open";
+  }
+  if (low === "in progress") {
+    const hit = find("in progress");
+    if (hit) return hit;
+  }
+  return find(low) || want;
+}
+
 export function propertiesForTask(task, schema) {
   const s = cloneSchema(schema);
   const title = String(task.title || "").slice(0, 2000);
-  const status = pickValue(s.statusValues, task.status, task.status === "In Progress" ? "In progress" : task.status || "Open");
+  const status = notionStatusName(s, task.status);
   const priority = pickValue(s.priorityValues, task.priority, task.priority === "Urgent" ? "High" : (task.priority || "Medium"));
   const area = pickValue(s.areaValues, task.area || "Magpy", (s.areaValues || []).includes("Magpy") ? "Magpy" : (task.area || "Magpy"));
   const ownerKnown = pickValue(s.ownerValues, task.owner, "");
-  const props = {
-    [s.title]: { title: [{ type: "text", text: { content: title } }] },
-    [s.status]: { select: status ? { name: status } : null },
-    [s.priority]: { select: priority ? { name: priority } : null },
-    [s.area]: { select: area ? { name: area } : null },
-    [s.due]: { date: /^\d{4}-\d{2}-\d{2}$/.test(task.due || "") ? { start: task.due } : null },
-    [s.notes]: { rich_text: task.notes ? [{ type: "text", text: { content: String(task.notes).slice(0, 2000) } }] : [] },
-  };
-  if (!task.owner || task.owner === "Unassigned" || !ownerKnown) props[s.owner] = { select: ownerKnown && task.owner && task.owner !== "Unassigned" ? { name: ownerKnown } : null };
-  else props[s.owner] = { select: { name: ownerKnown } };
+  const statusValue = status ? { name: status } : null;
+  const props = {};
+  if (s.title) props[s.title] = { title: [{ type: "text", text: { content: title } }] };
+  if (s.status) props[s.status] = s.statusType === "select" ? { select: statusValue } : { status: statusValue };
+  if (s.priority) props[s.priority] = { select: priority ? { name: priority } : null };
+  if (s.area) props[s.area] = { select: area ? { name: area } : null };
+  if (s.due) props[s.due] = { date: /^\d{4}-\d{2}-\d{2}$/.test(task.due || "") ? { start: task.due } : null };
+  if (s.notes) props[s.notes] = { rich_text: task.notes ? [{ type: "text", text: { content: String(task.notes).slice(0, 2000) } }] : [] };
+  if (s.owner) {
+    const name = ownerKnown && task.owner && task.owner !== "Unassigned" ? ownerKnown : "";
+    props[s.owner] = { select: name ? { name } : null };
+  }
   return props;
 }
 

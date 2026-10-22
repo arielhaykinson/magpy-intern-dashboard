@@ -10,7 +10,7 @@ run_worker_first = ["/api/*"]
 
 # One Durable Object holds all state. SQLite-backed => available on the Workers Free plan.
 # Notion task sync (optional): `npx wrangler secret put NOTION_TOKEN`
-# Optional vars: NOTION_DATABASE_ID (defaults to Intern Tasks), NOTION_SYNC_MS (default 30000).
+# Optional vars: NOTION_DATABASE_ID (defaults to Solavant Interns · Tasks 057cf17c94bb4acf988f926775660ab8), NOTION_SYNC_MS (default 30000).
 [[durable_objects.bindings]]
 name = "DASHBOARD"
 class_name = "Dashboard"

@@ -24,7 +24,9 @@ const mirror = resolveDatabaseId(STALE_MIRROR_DATABASE_ID);
 assert.equal(mirror.databaseId, INTERN_TASKS_DATABASE_ID);
 assert(mirror.warning.includes("stale"));
 assert.equal(resolveDatabaseId("").databaseId, INTERN_TASKS_DATABASE_ID);
-assert.equal(resolveDatabaseId("66707f68-2145-40aa-bdbc-3c14ccacc623").databaseId, INTERN_TASKS_DATABASE_ID);
+assert.equal(INTERN_TASKS_DATABASE_ID, "057cf17c94bb4acf988f926775660ab8");
+assert.equal(resolveDatabaseId("057cf17c-94bb-4acf-988f-926775660ab8").databaseId, INTERN_TASKS_DATABASE_ID);
+assert.equal(resolveDatabaseId("66707f68-2145-40aa-bdbc-3c14ccacc623").databaseId, "66707f68214540aabdbc3c14ccacc623");
 
 const named = mapPage({ id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", last_edited_time: "2026-10-21T19:00:00.000Z", properties: { Name: { type: "title", title: [{ plain_text: "From Name" }] }, Status: { type: "select", select: { name: "In progress" } } } });
 assert.equal(named.task.title, "From Name");
@@ -37,11 +39,52 @@ assert.equal(mapped.task.owner, "Unassigned");
 assert.equal(mapped.task.due, "2026-10-22");
 assert.equal(mapped.task.docs[0].url, "https://example.com/brief");
 
-const props = propertiesForTask({ title: "T", status: "In Progress", owner: "Unassigned", priority: "Urgent", area: "Magpy", due: "2026-10-22", notes: "n" }, DEFAULT_SCHEMA);
-assert.equal(props.Status.select.name, "In progress");
+const props = propertiesForTask({ title: "T", status: "Open", owner: "Unassigned", priority: "Urgent", area: "Solavant", due: "2026-10-22", notes: "n" }, DEFAULT_SCHEMA);
+assert.equal(props.Status.status.name, "Not started");
+assert.equal(props.Status.select, undefined);
 assert.equal(props.Owner.select, null);
 assert.equal(props.Priority.select.name, "High");
-assert.equal(props.Title.title[0].text.content, "T");
+assert.equal(props.Area.select.name, "Solavant");
+assert.equal(props["Task name"].title[0].text.content, "T");
+assert.equal(props.Description, undefined);
+assert.equal(props.Title, undefined);
+
+const selectSchema = { ...DEFAULT_SCHEMA, title: "Title", statusType: "select", notes: "Description", brief: "Brief", statusValues: ["Open", "In progress", "Review", "Done"] };
+const selectProps = propertiesForTask({ title: "T", status: "In Progress", owner: "Unassigned", priority: "Urgent", area: "Magpy", due: "2026-10-22", notes: "n" }, selectSchema);
+assert.equal(selectProps.Status.select.name, "In progress");
+assert.equal(selectProps.Title.title[0].text.content, "T");
+assert.equal(selectProps.Description.rich_text[0].text.content, "n");
+
+const solavant = mapPage({
+  id: "cccccccccccccccccccccccccccccccc",
+  last_edited_time: "2026-10-21T19:00:00.000Z",
+  properties: {
+    "Task name": { type: "title", title: [{ plain_text: "File the memo" }] },
+    Status: { type: "status", status: { name: "Not started" } },
+    Owner: { type: "select", select: { name: "Myles" } },
+    Priority: { type: "select", select: { name: "High" } },
+    Area: { type: "select", select: { name: "Solavant" } },
+    Due: { type: "date", date: { start: "2026-10-24" } },
+    Archived: { type: "checkbox", checkbox: false },
+  },
+});
+assert.equal(solavant.task.title, "File the memo");
+assert.equal(solavant.task.status, "Open");
+assert.equal(solavant.task.owner, "Myles");
+assert.equal(solavant.task.area, "Solavant");
+assert.equal(solavant.task.due, "2026-10-24");
+assert.equal(solavant.schema.title, "Task name");
+assert.equal(solavant.schema.statusType, "status");
+assert.equal(solavant.schema.notes, "");
+const solavantWrite = propertiesForTask({ ...solavant.task, status: "In Progress", notes: "stays on the dashboard" }, solavant.schema);
+assert.equal(solavantWrite.Status.status.name, "In progress");
+assert.equal(solavantWrite["Task name"].title[0].text.content, "File the memo");
+assert.equal(solavantWrite.Description, undefined);
+const hidden = mergeNotionTasks([], [{
+  id: "dddddddddddddddddddddddddddddddd", archived: false,
+  properties: { "Task name": { type: "title", title: [{ plain_text: "Hidden row" }] }, Status: { type: "status", status: { name: "Done" } }, Archived: { type: "checkbox", checkbox: true } },
+}], {}, { dropSeeds: false });
+assert.equal(hidden.tasks.length, 0);
 
 const seeds = [{ id: "seed1", title: "Natrion source list", status: "Open", owner: "Unassigned", due: "", priority: "High", area: "Magpy", notes: "", updatedAt: Date.now() }];
 const localEdit = { id: "abc", notionId: "abc", title: "dashboard edit", status: "Open", owner: "Ariel", due: "", priority: "High", area: "Magpy", notes: "", docs: [], localDirty: true, localEditedAt: Date.parse("2026-10-21T21:00:00.000Z"), notionEdited: "2026-10-21T18:00:00.000Z", updatedAt: Date.parse("2026-10-21T21:00:00.000Z") };
@@ -162,7 +205,7 @@ try {
   const after = await (await fetch(base + "/api/data")).json();
   const updated = after.tasks.find((t) => t.notionId === mine.notionId);
   assert.equal(updated.title, "Myles updated the title");
-  assert(after.activity.some((a) => /Intern Tasks/.test(a.text)));
+  assert(after.activity.some((a) => /Solavant Interns/.test(a.text)));
 
   const put = await (await fetch(base + "/api/task", { method: "PUT", headers: { "content-type": "application/json", "x-user": "Ariel" }, body: JSON.stringify({ ...updated, status: "In Progress", updatedAt: Date.now() }) })).json();
   assert.equal(put.applied, true);
