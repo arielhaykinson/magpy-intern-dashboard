@@ -25,13 +25,13 @@ const cmpTasks = (x, y) => sortBy === "priority" ? PR[pri(x)] - PR[pri(y)] || by
 const priTag = (t) => `<button type="button" class="pri ${pri(t)}" data-pri="${t.id}" aria-haspopup="menu" title="Change priority">${pri(t)}</button>`;
 function onBoard(t) {
   const n = data.notion || {};
-  if (n.error || !n.configured) return !!(t && t.localDirty);
+  if (!n.configured) return !!(t && t.localDirty);
   return !!(t && (t.notionId || t.localDirty));
 }
 function notionMessage() {
   const n = data.notion || {};
   if (n.error) return n.error;
-  if (!n.configured) return "Not connected. Share Solavant Private · Tasks with the SCM Team integration in Notion. This list stays empty until that connection is added, then it fills in on its own.";
+  if (!n.configured) return "Not connected. Share Solavant Private · Tasks with the SCM Team integration in Notion. Tasks tagged Private on Solavant Interns · Tasks still show here once that connection is added.";
   return "";
 }
 function notionBanner() {
@@ -93,7 +93,7 @@ function renderList(list) {
   const buckets = groupBy === "status"
     ? STATUSES.map((s) => ({ key: s, label: s, hint: "Status", ts: list.filter((t) => t.status === s) }))
     : OWNERS.map((s) => ({ key: s, label: s, hint: "Owner", ts: list.filter((t) => (t.owner || "Unassigned") === s) })).filter((g) => g.ts.length);
-  const note = list.length ? "" : `<div class="empty">${notionMessage() ? "Not connected. No tasks are loaded from Solavant Private · Tasks." : "No tasks yet."}</div>`;
+  const note = list.length ? "" : `<div class="empty">${notionMessage() ? "Not connected. No tasks are loaded yet. Tasks tagged Private on Solavant Interns · Tasks still show here." : "No tasks yet."}</div>`;
   $("#list").innerHTML = bar + note + buckets.map((g) => `<div class="group ${closed.has(g.key) ? "closed" : ""}" data-g="${esc(g.key)}"><div class="ghead"><h2>${esc(g.label)}</h2><span class="count">${g.ts.length}</span><span class="ornament">${g.hint}</span></div>
     <div class="rows">${g.ts.map(row).join("") || `<div class="empty">Nothing here yet</div>`}</div></div>`).join("");
 }
