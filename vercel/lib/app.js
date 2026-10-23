@@ -102,21 +102,77 @@ async function notionSyncFor(db, board = magpyBoard) {
 }
 // Serverless has no long-lived poll. Freshness is the syncedAt stored with the document,
 // so every instance waits the same interval, and Refresh Notion forces a pull.
+// One pull reads both databases and writes both stores, so a Section change cannot leave a task on two boards.
+let syncChain = Promise.resolve();
+function boardDirty(db) {
+  return (db.tasks || []).some((t) => t && !t.notionId && !t.localDirty);
+}
+async function syncBoth(force) {
+  const run = async () => {
+    const m = await notionReady;
+    const magStore = openStore(magpyBoard.key(), magpyBoard.file);
+    const privStore = openStore(privatesBoard.key(), privatesBoard.file);
+    for (let i = 0; i < 6; i++) {
+      const mag = await readState(magpyBoard);
+      const priv = await readState(privatesBoard);
+      if (!force && notionFresh(mag.db) && notionFresh(priv.db) && !boardDirty(mag.db) && !boardDirty(priv.db)) return { mag, priv };
+      const token = (process.env.NOTION_TOKEN || "").trim();
+      const apiBase = process.env.NOTION_API_BASE || "";
+      const resolved = m.resolveDatabaseId(magpyBoard.databaseId());
+      const privId = privatesBoard.databaseId();
+      const [internQ, privateRaw] = await Promise.all([
+        m.queryAllPages({ token, databaseId: resolved.databaseId, apiBase, label: magpyBoard.label }),
+        privId ? m.queryAllPages({ token, databaseId: privId, apiBase, label: privatesBoard.label }) : Promise.resolve(null),
+      ]);
+      const privateQ = privateRaw
+        ? { ...privateRaw, configured: true, databaseId: privId }
+        : { pages: [], error: "Not connected. Solavant Private · Tasks has no database id. Set PRIVATES_NOTION_DATABASE_ID.", incomplete: true, configured: false, databaseId: "" };
+      const routed = m.syncSectionBoards({
+        magpy: mag.db,
+        privates: priv.db,
+        intern: { ...internQ, configured: true, databaseId: resolved.databaseId, warning: resolved.warning },
+        privateQuery: privateQ,
+      });
+      if (!internQ.incomplete) {
+        const db = await m.retrieveDatabase({ token, databaseId: resolved.databaseId, apiBase });
+        if (db && db.properties) routed.magpy.notion.schema = m.applyDatabaseSchema(routed.magpy.notion.schema || m.DEFAULT_SCHEMA, db);
+      }
+      if (privId && privateRaw && !privateRaw.incomplete) {
+        const db = await m.retrieveDatabase({ token, databaseId: privId, apiBase });
+        if (db && db.properties) routed.privates.notion.schema = m.applyDatabaseSchema(routed.privates.notion.schema || m.PRIVATES_SCHEMA, db);
+      }
+      const take = (db, next, label) => {
+        db.tasks = next.tasks; db.tombstones = next.tombstones; db.comments = next.comments; db.activity = next.activity; db.notion = next.notion;
+        if (next.changed) {
+          const n = (next.tasks || []).filter((t) => t.notionId).length;
+          log(db, "Notion", "sync", null, `synced ${n} tasks from ${label}`);
+          const dropped = next.dropped || [];
+          if (dropped.length) {
+            const names = dropped.join(", ");
+            log(db, "Notion", "sync", null, names.length > 150 ? `removed ${dropped.length} local-only tasks that are not on ${label}` : `removed local-only tasks not on ${label}: ${names}`);
+          }
+        }
+      };
+      take(mag.db, routed.magpy, magpyBoard.label);
+      take(priv.db, routed.privates, privatesBoard.label);
+      const magOk = await magStore.cas(mag.rev, mag.db);
+      const privOk = await privStore.cas(priv.rev, priv.db);
+      if (magOk && privOk) return { mag: { rev: mag.rev + 1, db: mag.db }, priv: { rev: priv.rev + 1, db: priv.db } };
+    }
+    throw new Error("could not save Notion sync");
+  };
+  const job = syncChain.then(run, run);
+  syncChain = job.then(() => {}, () => {});
+  return job;
+}
 async function readWithNotion(force, board = magpyBoard) {
-  if (!board.configured()) return readState(board);
-  const s = openStore(board.key(), board.file);
-  for (let i = 0; i < 6; i++) {
-    const { rev, db } = await readState(board);
-    if (!force && notionFresh(db) && !((db.tasks || []).some((t) => t && !t.notionId && !t.localDirty))) return { rev, db };
-    await (await notionSyncFor(db, board)).refresh(true);
-    if (await s.cas(rev, db)) return { rev: rev + 1, db };
-  }
-  throw new Error("could not save Notion sync");
+  if (!magpyBoard.configured()) return readState(board);
+  const both = await syncBoth(force);
+  return board.name === "privates" ? both.priv : both.mag;
 }
 function view(db, rev, board = magpyBoard) {
   const notion = notionView(db, board);
-  let tasks = shownTasks(db, board);
-  if (board.name === "privates" && notion.configured && notion.error) tasks = tasks.filter((t) => t && t.localDirty);
+  const tasks = shownTasks(db, board);
   return { rev, tasks, meetings: db.meetings, asks: db.asks, comments: db.comments, activity: db.activity.slice(-150).reverse(), hours: Object.fromEntries(Object.entries(db.hours).map(([k, v]) => [k, v.value])), notion };
 }
 
@@ -276,6 +332,8 @@ async function handler(req, res) {
         const nt = { id: t.id, updatedAt: t.updatedAt }; for (const k of FIELDS) nt[k] = String(t[k] ?? ""); nt.priority = normPri(nt.priority);
         nt.docs = cleanDocs(t.docs === undefined ? (cur && cur.docs) : t.docs, cur && cur.docs, by);
         if (cur && cur.notionId) { nt.notionId = cur.notionId; nt.notionEdited = cur.notionEdited; nt.notionUrl = cur.notionUrl || ""; }
+        nt.section = board.name === "privates" ? "Private" : "Magpy";
+        nt.source = (cur && cur.source) || board.name;
         logTaskChange(db, by, cur, nt); logDocs(db, by, cur, nt); i >= 0 ? (db.tasks[i] = nt) : db.tasks.push(nt); delete db.tombstones[t.id];
         let notionError = "";
         if (board.configured()) notionError = (await (await notionSyncFor(db, board)).pushTask(nt)).error || "";

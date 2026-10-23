@@ -102,6 +102,9 @@ export const DEFAULT_SCHEMA = {
   priorityValues: ["High", "Medium", "Low"],
   areaValues: ["Magpy", "Optix", "Krino", "Solavant", "Research", "Other"],
   defaultArea: "Magpy",
+  section: "Section",
+  sectionValues: ["Magpy", "Private"],
+  defaultSection: "Magpy",
 };
 
 // Solavant Private · Tasks uses the same status and owner columns, and a shorter Area list.
@@ -109,6 +112,7 @@ export const PRIVATES_SCHEMA = {
   ...DEFAULT_SCHEMA,
   defaultArea: "Solavant Private",
   areaValues: ["Solavant Private", "Research", "Other"],
+  defaultSection: "Private",
 };
 
 function remember(list, value) {
@@ -138,10 +142,12 @@ export function learnSchema(page, schema) {
   else schema.brief = "";
   if (props["Output link"] && props["Output link"].type === "url") schema.output = "Output link";
   else schema.output = "";
+  if (props.Section && (props.Section.type === "select" || props.Section.type === "status")) schema.section = "Section";
   remember(schema.statusValues, textOf(props[schema.status]));
   remember(schema.ownerValues, textOf(props[schema.owner]));
   remember(schema.priorityValues, textOf(props[schema.priority]));
   remember(schema.areaValues, textOf(props[schema.area]));
+  remember(schema.sectionValues, textOf(props.Section));
   return schema;
 }
 
@@ -152,11 +158,34 @@ function cloneSchema(schema) {
     ...s,
     statusType: s.statusType || DEFAULT_SCHEMA.statusType,
     defaultArea: s.defaultArea || DEFAULT_SCHEMA.defaultArea || "Magpy",
+    defaultSection: s.defaultSection || DEFAULT_SCHEMA.defaultSection || "Magpy",
+    section: s.section === undefined ? DEFAULT_SCHEMA.section : s.section,
     statusValues: [...(s.statusValues || DEFAULT_SCHEMA.statusValues)],
     ownerValues: [...(s.ownerValues || DEFAULT_SCHEMA.ownerValues)],
     priorityValues: [...(s.priorityValues || DEFAULT_SCHEMA.priorityValues)],
     areaValues: [...(s.areaValues || DEFAULT_SCHEMA.areaValues)],
+    sectionValues: [...(s.sectionValues || DEFAULT_SCHEMA.sectionValues)],
   };
+}
+
+// "Private" and "Magpy" are explicit. Anything else, including an empty Section, stays with the database the page came from.
+export function routeSection(sectionValue, source) {
+  const s = String(sectionValue || "").trim().toLowerCase();
+  if (s === "private" || s === "privates") return "privates";
+  if (s === "magpy") return "magpy";
+  return source === "privates" ? "privates" : "magpy";
+}
+
+export function sectionValueOf(page) {
+  const props = (page && page.properties) || {};
+  return textOf(props.Section).trim();
+}
+
+export function canonicalSection(value) {
+  const s = String(value || "").trim().toLowerCase();
+  if (s === "private" || s === "privates") return "Private";
+  if (s === "magpy") return "Magpy";
+  return "";
 }
 
 function linkDoc(id, url, title, at) {
@@ -185,6 +214,8 @@ export function mapPage(page, schema) {
       due: dateOnly(textOf(props[s.due])),
       priority: dashPriority(textOf(props[s.priority])),
       area: textOf(props[s.area]).trim() || s.defaultArea || "Magpy",
+      section: canonicalSection(sectionValueOf(page)),
+      source: page._source === "privates" ? "privates" : page._source === "magpy" ? "magpy" : "",
       notes,
       docs,
       updatedAt: Date.parse(at) || Date.now(),
@@ -200,7 +231,7 @@ function explainHttp(status, message, label) {
   if (status === 401) return `Notion rejected the token (401${suffix}). Check NOTION_TOKEN.`;
   if (status === 403 || status === 404) {
     if (name === "Solavant Interns · Tasks") return `Notion could not read Solavant Interns · Tasks (${status}${suffix}). Share that database with the integration. The old Intern Tasks database and the Magpy Intern Dashboard mirror are different databases.`;
-    return `Not connected. Notion could not read ${name} (${status}${suffix}). In Notion, open Solavant Private and add the SCM Team connection to that database. This list stays empty until then, and fills in on its own once access is granted.`;
+    return `Not connected. Notion could not read ${name} (${status}${suffix}). In Notion, open Solavant Private and add the SCM Team connection to that database. Tasks tagged Private on Solavant Interns · Tasks still show here. This database fills in on its own once access is granted.`;
   }
   return `Notion error (${status}): ${detail}`;
 }
@@ -288,7 +319,9 @@ export function applyDatabaseSchema(schema, db) {
   take("Owner", "select", "owner", "ownerValues");
   take("Priority", "select", "priority", "priorityValues");
   take("Area", "select", "area", "areaValues");
+  take("Section", "select", "section", "sectionValues");
   take("Due", "date", "due");
+  if (!(props.Section && (props.Section.type === "select" || props.Section.type === "status"))) s.section = "";
   if (props.Description && props.Description.type === "rich_text") s.notes = "Description";
   else if (props.Notes && props.Notes.type === "rich_text") s.notes = "Notes";
   if (s.defaultArea && !(s.areaValues || []).includes(s.defaultArea) && (s.areaValues || []).length) s.defaultArea = s.areaValues[0];
@@ -309,7 +342,7 @@ function docKey(docs) {
 }
 
 function sameFields(a, b) {
-  for (const k of ["title", "status", "owner", "due", "priority", "area", "notes"]) if ((a[k] || "") !== (b[k] || "")) return false;
+  for (const k of ["title", "status", "owner", "due", "priority", "area", "notes", "section", "source"]) if ((a[k] || "") !== (b[k] || "")) return false;
   return docKey(a.docs) === docKey(b.docs);
 }
 
@@ -327,7 +360,7 @@ export function tasksForView(tasks, configured) {
   return list.filter((t) => t && (t.notionId || t.localDirty));
 }
 
-export function mergeNotionTasks(tasks, pages, tombstones, { partial, dropSeeds, comments, schema: schemaIn } = {}) {
+export function mergeNotionTasks(tasks, pages, tombstones, { partial, dropSeeds, comments, schema: schemaIn, keepUnseen, tombstoneUnseen } = {}) {
   const tombs = { ...(tombstones || {}) };
   const schema = cloneSchema(schemaIn);
   let changed = false;
@@ -352,6 +385,7 @@ export function mergeNotionTasks(tasks, pages, tombstones, { partial, dropSeeds,
     schema.ownerValues = mapped.schema.ownerValues;
     schema.priorityValues = mapped.schema.priorityValues;
     schema.areaValues = mapped.schema.areaValues;
+    schema.sectionValues = mapped.schema.sectionValues;
     const nt = mapped.task;
     seen.add(nt.notionId);
     if (tombs[nt.id] && tombs[nt.id] > nt.updatedAt) continue;
@@ -375,7 +409,8 @@ export function mergeNotionTasks(tasks, pages, tombstones, { partial, dropSeeds,
     for (let i = kept.length - 1; i >= 0; i--) {
       const t = kept[i];
       if (t.notionId && !seen.has(t.notionId)) {
-        tombs[t.id] = Date.now();
+        if (typeof keepUnseen === "function" && keepUnseen(t)) continue;
+        if (tombstoneUnseen !== false) tombs[t.id] = Date.now();
         kept.splice(i, 1);
         changed = true;
       }
@@ -430,7 +465,157 @@ export function propertiesForTask(task, schema) {
     const name = ownerKnown && task.owner && task.owner !== "Unassigned" ? ownerKnown : "";
     props[s.owner] = { select: name ? { name } : null };
   }
+  if (s.section) {
+    const want = canonicalSection(task.section) || s.defaultSection || "";
+    const section = pickValue(s.sectionValues, want, want);
+    if (section) props[s.section] = { select: { name: section } };
+  }
   return props;
+}
+
+// Drop activity and comments whose task is gone. Entries with no taskId (meetings, sync notes) stay.
+// A localDirty row is still in the task list, so its "created this task" line stays until the write lands.
+export function pruneDetached(db) {
+  const ids = new Set();
+  for (const t of (db && db.tasks) || []) {
+    if (!t) continue;
+    if (t.id) ids.add(t.id);
+    if (t.notionId) ids.add(t.notionId);
+  }
+  const activity = ((db && db.activity) || []).filter((a) => !a || !a.taskId || ids.has(a.taskId));
+  const comments = { ...((db && db.comments) || {}) };
+  for (const id of Object.keys(comments)) if (!ids.has(id)) delete comments[id];
+  return { activity, comments };
+}
+
+function tagSource(pages, source) {
+  return (pages || []).filter(Boolean).map((page) => (page._source === source ? page : { ...page, _source: source }));
+}
+
+function queryKind(q, absentOnUnreadable) {
+  if (!q || q.configured === false) return "absent";
+  if (!q.incomplete) return "ok";
+  if (q.pages && q.pages.length) return "partial";
+  if (absentOnUnreadable) {
+    const err = String(q.error || "");
+    if (/not connected|\b404\b|\b403\b|could not find database/i.test(err)) return "absent";
+  }
+  return "failed";
+}
+
+function relocateComments(from, to) {
+  if (!from || !to) return;
+  const ids = new Set();
+  for (const t of to.tasks || []) {
+    if (t && t.id) ids.add(t.id);
+    if (t && t.notionId) ids.add(t.notionId);
+  }
+  from.comments ||= {};
+  to.comments ||= {};
+  for (const id of Object.keys(from.comments)) {
+    if (!ids.has(id)) continue;
+    if (!to.comments[id]) to.comments[id] = from.comments[id];
+    delete from.comments[id];
+  }
+}
+
+function boardSnapshot(base, notion) {
+  return {
+    tasks: (base && base.tasks) || [],
+    tombstones: (base && base.tombstones) || {},
+    comments: { ...((base && base.comments) || {}) },
+    activity: ((base && base.activity) || []).slice(),
+    notion,
+    changed: false,
+    dropped: [],
+  };
+}
+
+// One pull of both databases, then each task is placed on a single board.
+// intern/private query kinds: ok, partial (keep unseen from that database), failed (keep the last good rows),
+// absent (the Private database contributed nothing, so rows that lived only there are dropped).
+export function syncSectionBoards({ magpy, privates, intern, privateQuery, now } = {}) {
+  const at = now || Date.now();
+  const internKind = queryKind(intern, false);
+  const privateKind = queryKind(privateQuery, true);
+  const internPages = internKind === "failed" ? [] : tagSource(intern && intern.pages, "magpy");
+  const privatePages = privateKind === "ok" || privateKind === "partial" ? tagSource(privateQuery && privateQuery.pages, "privates") : [];
+  const magpyPages = [];
+  const privatesPages = [];
+  for (const page of [...internPages, ...privatePages]) {
+    const board = routeSection(sectionValueOf(page), page._source);
+    (board === "privates" ? privatesPages : magpyPages).push(page);
+  }
+  const keepUnseen = (t) => {
+    const src = t && t.source === "privates" ? "privates" : "magpy";
+    const kind = src === "privates" ? privateKind : internKind;
+    return kind === "partial" || kind === "failed";
+  };
+  const finish = (base, pages, schema, { dropSeeds, error, warning, databaseId, merge }) => {
+    if (!merge) {
+      return boardSnapshot(base, {
+        ...((base && base.notion) || {}),
+        syncedAt: at,
+        error: error || "",
+        warning: warning || ((base && base.notion && base.notion.warning) || ""),
+        databaseId: databaseId || ((base && base.notion && base.notion.databaseId) || ""),
+        count: ((base && base.tasks) || []).filter((t) => t && t.notionId).length,
+      });
+    }
+    const merged = mergeNotionTasks((base && base.tasks) || [], pages, (base && base.tombstones) || {}, {
+      partial: false,
+      dropSeeds,
+      comments: base && base.comments,
+      schema,
+      keepUnseen,
+      tombstoneUnseen: false,
+    });
+    return {
+      tasks: merged.tasks,
+      tombstones: merged.tombstones,
+      comments: { ...((base && base.comments) || {}) },
+      activity: ((base && base.activity) || []).slice(),
+      notion: {
+        ...((base && base.notion) || {}),
+        syncedAt: at,
+        error: error || "",
+        warning: warning || "",
+        databaseId: databaseId || "",
+        schema: merged.schema,
+        count: merged.tasks.filter((t) => t.notionId).length,
+        droppedLocal: merged.dropped.length ? merged.dropped : (((base && base.notion) && base.notion.droppedLocal) || []),
+      },
+      changed: merged.changed,
+      dropped: merged.dropped,
+    };
+  };
+  const magpyNext = finish(magpy, magpyPages, (magpy && magpy.notion && magpy.notion.schema) || DEFAULT_SCHEMA, {
+    merge: internKind !== "failed",
+    dropSeeds: internKind === "ok",
+    error: internKind === "ok" ? "" : ((intern && intern.error) || "Notion sync failed"),
+    warning: (intern && intern.warning) || "",
+    databaseId: (intern && intern.databaseId) || "",
+  });
+  const privateError = privateKind === "ok" ? "" : ((privateQuery && privateQuery.error) || "Not connected. Notion could not read Solavant Private · Tasks.");
+  const privNext = finish(privates, privatesPages, (privates && privates.notion && privates.notion.schema) || PRIVATES_SCHEMA, {
+    merge: !(internKind === "failed" && privateKind === "failed"),
+    dropSeeds: internKind === "ok" || privateKind === "ok" || privateKind === "absent",
+    error: privateError,
+    warning: (privateQuery && privateQuery.warning) || "",
+    databaseId: (privateQuery && privateQuery.databaseId) || "",
+  });
+  const confident = internKind !== "failed" && privateKind !== "failed";
+  if (confident) {
+    relocateComments(magpyNext, privNext);
+    relocateComments(privNext, magpyNext);
+    for (const next of [magpyNext, privNext]) {
+      const pruned = pruneDetached(next);
+      if (pruned.activity.length !== next.activity.length || Object.keys(pruned.comments).length !== Object.keys(next.comments).length) next.changed = true;
+      next.activity = pruned.activity;
+      next.comments = pruned.comments;
+    }
+  }
+  return { magpy: magpyNext, privates: privNext };
 }
 
 async function notionWrite({ token, apiBase, fetchImpl, method, path, body, label }) {

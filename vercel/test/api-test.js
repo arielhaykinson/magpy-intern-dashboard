@@ -108,6 +108,7 @@ async function notionSuite() {
             Priority: { type: "select", select: { options: opt(["High", "Medium", "Low"]) } },
             Area: { type: "select", select: { options: opt(["Solavant Private", "Research", "Other"]) } },
             Due: { type: "date", date: {} },
+            Section: { type: "select", select: { options: opt(["Magpy", "Private"]) } },
           } }));
         }
         res.writeHead(404); return res.end(JSON.stringify({ message: "no database" }));
@@ -160,6 +161,8 @@ async function notionSuite() {
   const edited = await call("PUT", "/api/task", { ...d.tasks[0], title: "Edited on the dashboard", updatedAt: Date.now() });
   assert.equal(edited.j.applied, true); assert.equal(edited.j.notionError, "");
   assert(seen.some((s) => s.method === "PATCH" && s.url.includes("/pages/")));
+  const magPatch = seen.filter((s) => s.method === "PATCH" && s.url.includes("/pages/")).pop();
+  assert.equal(magPatch.body.properties.Section.select.name, "Magpy");
   const blocked = (await call("GET", "/api/privates/data")).j;
   assert.equal(blocked.tasks.length, 0, "a 404 does not copy Magpy tasks into Privates");
   assert.equal(blocked.notion.configured, true);
@@ -195,12 +198,56 @@ async function notionSuite() {
   const post = seen.filter((s) => s.method === "POST" && /\/pages$/.test(s.url)).pop();
   assert(post, "a Privates edit is written to Notion");
   assert.equal(String(post.body.parent.database_id).replace(/-/g, ""), PRIV);
+  assert.equal(post.body.properties.Section.select.name, "Private");
   const magFile = JSON.parse(fs.readFileSync(path.join(process.env.DATA_DIR, "state.json"), "utf8"));
   const privFile = JSON.parse(fs.readFileSync(path.join(process.env.DATA_DIR, "privates-state.json"), "utf8"));
   assert(magFile.db.tasks.some((t) => t.title === "Edited on the dashboard"));
   assert(!magFile.db.tasks.some((t) => t.title === "Partner introduction" || t.title === "New private task"));
   assert(privFile.db.tasks.some((t) => t.title === "Partner introduction"));
   assert(!privFile.db.tasks.some((t) => t.title === "Edited on the dashboard"));
+  const tagged = {
+    id: "taggedprivate00000000000000001", url: "https://www.notion.so/tagged", archived: false,
+    last_edited_time: "2026-10-23T12:00:00.000Z",
+    properties: {
+      Title: { type: "title", title: [{ plain_text: "Tagged private" }] },
+      Status: { type: "select", select: { name: "Open" } },
+      Owner: { type: "select", select: { name: "Can" } },
+      Priority: { type: "select", select: { name: "Low" } },
+      Area: { type: "select", select: { name: "Magpy" } },
+      Due: { type: "date", date: null },
+      Description: { type: "rich_text", rich_text: [] },
+      Section: { type: "select", select: { name: "Private" } },
+    },
+  };
+  pages.push(tagged);
+  assert.equal((await call("POST", "/api/notion/refresh")).j.ok, true);
+  let movedMag = (await call("GET", "/api/data")).j;
+  let movedPriv = (await call("GET", "/api/privates/data")).j;
+  assert(!movedMag.tasks.some((t) => t.title === "Tagged private"));
+  assert(movedMag.tasks.some((t) => t.title === "Edited on the dashboard"));
+  assert(movedPriv.tasks.some((t) => t.title === "Tagged private"));
+  assert(movedPriv.tasks.some((t) => t.title === "Partner introduction"));
+  assert(!movedPriv.tasks.some((t) => t.title === "Edited on the dashboard"));
+  privatesMode = "missing";
+  const hiddenDb = await call("POST", "/api/privates/notion/refresh");
+  assert.match(hiddenDb.j.error, /Not connected/);
+  assert.equal(hiddenDb.j.ok, false);
+  movedMag = (await call("GET", "/api/data")).j;
+  movedPriv = (await call("GET", "/api/privates/data")).j;
+  assert.equal(movedMag.notion.ok, true);
+  assert(!movedMag.tasks.some((t) => t.title === "Tagged private"));
+  assert(movedMag.tasks.some((t) => t.title === "Edited on the dashboard"));
+  assert(movedPriv.tasks.some((t) => t.title === "Tagged private"), "a Private tag on the Interns database still shows when the Private database 404s");
+  assert(!movedPriv.tasks.some((t) => t.title === "Partner introduction"));
+  tagged.properties.Section.select = null;
+  tagged.last_edited_time = "2026-10-23T12:10:00.000Z";
+  privatesMode = "live";
+  assert.equal((await call("POST", "/api/notion/refresh")).j.ok, true);
+  movedMag = (await call("GET", "/api/data")).j;
+  movedPriv = (await call("GET", "/api/privates/data")).j;
+  assert(movedMag.tasks.some((t) => t.title === "Tagged private"), "clearing Section returns the row to Magpy");
+  assert(!movedPriv.tasks.some((t) => t.title === "Tagged private"));
+  assert(movedPriv.tasks.some((t) => t.title === "Partner introduction"));
   h.close(); mock.close();
   delete process.env.NOTION_TOKEN; delete process.env.NOTION_API_BASE;
   console.log("PASS notion sync");

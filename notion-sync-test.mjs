@@ -3,7 +3,7 @@ import http from "http";
 import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
-import { queryAllPages, mergeNotionTasks, mapPage, resolveDatabaseId, propertiesForTask, tasksForView, INTERN_TASKS_DATABASE_ID, STALE_MIRROR_DATABASE_ID, DEFAULT_SCHEMA } from "./notion-sync.mjs";
+import { queryAllPages, mergeNotionTasks, mapPage, resolveDatabaseId, propertiesForTask, tasksForView, routeSection, syncSectionBoards, INTERN_TASKS_DATABASE_ID, PRIVATES_TASKS_DATABASE_ID, STALE_MIRROR_DATABASE_ID, DEFAULT_SCHEMA } from "./notion-sync.mjs";
 
 const page = (id, title, extra = {}) => ({
   id, url: "https://www.notion.so/" + id, archived: false,
@@ -48,6 +48,14 @@ assert.equal(props.Area.select.name, "Solavant");
 assert.equal(props["Task name"].title[0].text.content, "T");
 assert.equal(props.Description, undefined);
 assert.equal(props.Title, undefined);
+assert.equal(props.Section.select.name, "Magpy");
+assert.equal(propertiesForTask({ title: "T", status: "Open", section: "Private" }, DEFAULT_SCHEMA).Section.select.name, "Private");
+assert.equal(routeSection("Private", "magpy"), "privates");
+assert.equal(routeSection("magpy", "privates"), "magpy");
+assert.equal(routeSection("", "magpy"), "magpy");
+assert.equal(routeSection("  ", "privates"), "privates");
+assert.equal(routeSection("nope", "privates"), "privates");
+assert.equal(routeSection("nope", "magpy"), "magpy");
 
 const selectSchema = { ...DEFAULT_SCHEMA, title: "Title", statusType: "select", notes: "Description", brief: "Brief", statusValues: ["Open", "In progress", "Review", "Done"] };
 const selectProps = propertiesForTask({ title: "T", status: "In Progress", owner: "Unassigned", priority: "Urgent", area: "Magpy", due: "2026-10-22", notes: "n" }, selectSchema);
@@ -137,6 +145,88 @@ const partial = await queryAllPages({
 assert.equal(partial.incomplete, true);
 const survived = mergeNotionTasks([{ id: "keep", notionId: "keep", title: "still here", status: "Open", owner: "Can", due: "", priority: "Low", area: "Magpy", notes: "", docs: [] }], partial.pages, {}, { partial: true, dropSeeds: false });
 assert(survived.tasks.some((t) => t.notionId === "keep"), "a partial page must not drop tasks Notion has not sent yet");
+
+const hiId = "tmv76tnl15qyl";
+const taggedId = "22222222222222222222222222222222";
+const routed = syncSectionBoards({
+  magpy: {
+    tasks: [
+      { id: hiId, title: "hi", status: "Open", owner: "Can", due: "", priority: "Low", area: "Magpy", notes: "", docs: [] },
+      { id: "pending", title: "A real new task", status: "Open", owner: "Ariel", due: "", priority: "High", area: "Magpy", notes: "", docs: [], localDirty: true },
+    ],
+    activity: [
+      { taskId: hiId, title: "hi", text: "created this task" },
+      { taskId: "", title: "Weekly", text: "requested a meeting" },
+      { taskId: "pending", title: "A real new task", text: "created this task" },
+    ],
+    comments: { [hiId]: [{ text: "stale" }], pending: [{ text: "keep" }], [taggedId]: [{ text: "moves" }] },
+    tombstones: {},
+    notion: {},
+  },
+  privates: {
+    tasks: [{ id: "oldpriv", notionId: "oldpriv", source: "privates", title: "Old private only", status: "Open", owner: "Ariel", due: "", priority: "Low", area: "Solavant Private", notes: "", docs: [] }],
+    activity: [{ taskId: "oldpriv", title: "Old private only", text: "created this task" }],
+    comments: { oldpriv: [{ text: "gone" }] },
+    tombstones: {},
+    notion: {},
+  },
+  intern: {
+    pages: [
+      { id: "11111111111111111111111111111111", last_edited_time: "2026-10-22T12:00:00.000Z", properties: { "Task name": { type: "title", title: [{ plain_text: "Stay on Magpy" }] }, Status: { type: "status", status: { name: "Not started" } }, Section: { type: "select", select: null } } },
+      { id: taggedId, last_edited_time: "2026-10-22T12:00:00.000Z", properties: { "Task name": { type: "title", title: [{ plain_text: "Route me" }] }, Status: { type: "status", status: { name: "In progress" } }, Section: { type: "select", select: { name: "Private" } } } },
+    ],
+    error: "", incomplete: false, configured: true, databaseId: INTERN_TASKS_DATABASE_ID,
+  },
+  privateQuery: { pages: [], error: "Not connected. Notion could not read Solavant Private · Tasks (404).", incomplete: true, configured: true, databaseId: PRIVATES_TASKS_DATABASE_ID },
+});
+assert(routed.magpy.tasks.some((t) => t.title === "Stay on Magpy"));
+assert(!routed.magpy.tasks.some((t) => t.title === "Route me" || t.title === "hi" || t.title === "Old private only"));
+assert(routed.magpy.tasks.some((t) => t.title === "A real new task" && t.localDirty && !t.notionId));
+assert(!routed.magpy.activity.some((a) => a.title === "hi" || a.taskId === hiId));
+assert(routed.magpy.activity.some((a) => a.text === "requested a meeting"));
+assert(routed.magpy.activity.some((a) => a.taskId === "pending"));
+assert(!routed.magpy.comments[hiId]);
+assert(routed.magpy.comments.pending);
+assert.equal(routed.magpy.notion.error, "");
+assert(routed.privates.tasks.some((t) => t.title === "Route me" && t.section === "Private"));
+assert(!routed.privates.tasks.some((t) => t.title === "Stay on Magpy" || t.title === "Old private only" || t.title === "hi"));
+assert.equal(routed.privates.comments[taggedId][0].text, "moves");
+assert(!routed.privates.activity.some((a) => a.title === "Old private only"));
+assert.match(routed.privates.notion.error, /Not connected/);
+const back = syncSectionBoards({
+  magpy: routed.magpy,
+  privates: routed.privates,
+  intern: {
+    pages: [
+      { id: "11111111111111111111111111111111", last_edited_time: "2026-10-22T12:05:00.000Z", properties: { "Task name": { type: "title", title: [{ plain_text: "Stay on Magpy" }] }, Status: { type: "status", status: { name: "Not started" } }, Section: { type: "select", select: null } } },
+      { id: taggedId, last_edited_time: "2026-10-22T12:05:00.000Z", properties: { "Task name": { type: "title", title: [{ plain_text: "Route me" }] }, Status: { type: "status", status: { name: "In progress" } }, Section: { type: "select", select: null } } },
+    ],
+    error: "", incomplete: false, configured: true, databaseId: INTERN_TASKS_DATABASE_ID,
+  },
+  privateQuery: {
+    pages: [
+      { id: "33333333333333333333333333333333", last_edited_time: "2026-10-22T12:05:00.000Z", properties: { "Task name": { type: "title", title: [{ plain_text: "Lives on Private" }] }, Status: { type: "status", status: { name: "Not started" } }, Section: { type: "select", select: null } } },
+      { id: "44444444444444444444444444444444", last_edited_time: "2026-10-22T12:05:00.000Z", properties: { "Task name": { type: "title", title: [{ plain_text: "Tagged back to Magpy" }] }, Status: { type: "status", status: { name: "Not started" } }, Section: { type: "select", select: { name: "Magpy" } } } },
+    ],
+    error: "", incomplete: false, configured: true, databaseId: PRIVATES_TASKS_DATABASE_ID,
+  },
+});
+assert(back.magpy.tasks.some((t) => t.title === "Route me"), "clearing Section sends an Interns row back to Magpy");
+assert(back.magpy.tasks.some((t) => t.title === "Tagged back to Magpy"));
+assert(!back.magpy.tasks.some((t) => t.title === "Lives on Private"));
+assert(!back.privates.tasks.some((t) => t.title === "Route me" || t.title === "Tagged back to Magpy"));
+assert(back.privates.tasks.some((t) => t.title === "Lives on Private"));
+assert.equal(back.privates.notion.error, "");
+assert(back.magpy.tasks.some((t) => t.title === "A real new task" && t.localDirty));
+const failed = syncSectionBoards({
+  magpy: { tasks: [{ id: "a", notionId: "a", source: "magpy", title: "keep me", status: "Open", owner: "Can", due: "", priority: "Low", area: "Magpy", notes: "", docs: [] }], activity: [{ taskId: "a", title: "keep me", text: "created this task" }], comments: {}, tombstones: {}, notion: {} },
+  privates: { tasks: [], activity: [], comments: {}, tombstones: {}, notion: {} },
+  intern: { pages: [], error: "Could not reach Notion: timeout", incomplete: true, configured: true, databaseId: INTERN_TASKS_DATABASE_ID },
+  privateQuery: { pages: [], error: "Not connected. Notion could not read Solavant Private · Tasks (404).", incomplete: true, configured: true, databaseId: PRIVATES_TASKS_DATABASE_ID },
+});
+assert.equal(failed.magpy.tasks[0].title, "keep me");
+assert(failed.magpy.activity.some((a) => a.taskId === "a"));
+assert.match(failed.magpy.notion.error, /timeout/);
 
 const worker = fs.readFileSync(path.join("cloudflare", "src", "index.js"), "utf8");
 const server = fs.readFileSync("server.js", "utf8");
